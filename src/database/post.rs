@@ -147,6 +147,18 @@ impl Post {
 		}
 	}
 
+	pub async fn select_post_random(client: &pg::Client) -> Result<Option<Self>, DatabaseError> {
+		let query = "SELECT * FROM posts ORDER BY RANDOM() LIMIT 1";
+		let row = client
+			.query_opt(query, &[])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		match row {
+			Some(row) => Ok(Some(Self::serialise(&row))),
+			None => Ok(None),
+		}
+	}
+
 	pub async fn select_id_poster(
 		client: &pg::Client,
 		id: i64,

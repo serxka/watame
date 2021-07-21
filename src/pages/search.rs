@@ -49,10 +49,7 @@ pub async fn get_search(
 	let tags: Vec<&str> =
 		serde_json::from_str(&query.tags).map_err(|_| APIError::BadRequestData)?;
 	for tag in &tags {
-		if tag
-			.chars()
-			.any(|c| matches!(c, ' ' | '|' | '(' | ')'))
-		{
+		if tag.chars().any(|c| matches!(c, ' ' | '|' | '(' | ')')) {
 			return Err(APIError::BadTags);
 		}
 	}
@@ -83,5 +80,29 @@ pub async fn get_search(
 				serde_json::to_vec(&posts)
 					.map_err(|e| error500("get_search:json serialize", Box::new(e)))?,
 			))
+	}
+}
+
+pub async fn get_random_post(pool: web::Data<DbPool>) -> Result<HttpResponse, APIError> {
+	// Query database for post
+	let conn = pool
+		.get()
+		.await
+		.map_err(|e| error500("get_random_post:db pool", Box::new(e)))?;
+	let post = db::post::Post::select_post_random(&conn)
+		.await
+		.map_err(|e| error500("get_random_post:select_post_random", Box::new(e)))?;
+
+	// Check to see if we actually found a post
+	match post {
+		Some(x) => Ok(HttpResponse::Ok()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(
+				serde_json::to_string(&x)
+					.map_err(|e| error500("get_random_post:json serialize", Box::new(e)))?,
+			)),
+		None => Ok(HttpResponse::NotFound()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(r#"{"error":"no posts found"}"#)),
 	}
 }

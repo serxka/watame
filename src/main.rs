@@ -93,6 +93,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 					.route(post().to(post::post_upload)),
 			)
 			.service(resource("/search").route(get().to(search::get_search)))
+			.service(resource("/random").route(get().to(search::get_random_post)))
 			.service(Files::new("/s", &storage_root))
 			// Debugging routes
 			.service(resource("/upload").route(get().to(pages::upload_post_html)))
