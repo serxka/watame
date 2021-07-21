@@ -46,11 +46,14 @@ pub async fn get_search(
 	query: web::Query<SearchPostQuery>,
 	pool: web::Data<DbPool>,
 ) -> Result<HttpResponse, APIError> {
-	let tags: Vec<&str> =
+	let mut tags: Vec<&str> =
 		serde_json::from_str(&query.tags).map_err(|_| APIError::BadRequestData)?;
-	for tag in &tags {
-		if tag.chars().any(|c| matches!(c, ' ' | '|' | '(' | ')')) {
+	for i in 0..tags.len() {
+		if tags[i].chars().any(|c| matches!(c, ' ' | '|' | '(' | ')')) {
 			return Err(APIError::BadTags);
+		}
+		if tags[i].is_empty() {
+			tags.remove(i);
 		}
 	}
 	if tags.len() > 10 {

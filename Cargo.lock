@@ -19,6 +19,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-cors"
+version = "0.6.0-beta.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01552b8facccd5d7a4cc5d8e2b07d306160c97a4968181c2db965533389c8725"
+dependencies = [
+ "actix-service",
+ "actix-web",
+ "derive_more",
+ "futures-util",
+ "log",
+ "once_cell",
+ "smallvec",
+]
+
+[[package]]
 name = "actix-files"
 version = "0.6.0-beta.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2415,6 +2430,7 @@ checksum = "d7cff876b8f18eed75a66cf49b65e7f967cb354a7aa16003fb55dbfd25b44b4f"
 name = "watame"
 version = "0.0.0"
 dependencies = [
+ "actix-cors",
  "actix-files",
  "actix-multipart",
  "actix-web",

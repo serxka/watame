@@ -5,11 +5,17 @@ use crate::pages::search::PostSorting;
 
 #[derive(Debug, serde::Serialize)]
 pub enum ImageExtension {
+	#[serde(rename = "bmp")]
 	Bmp,
+	#[serde(rename = "gif")]
 	Gif,
+	#[serde(rename = "jpg")]
 	Jpeg,
+	#[serde(rename = "png")]
 	Png,
+	#[serde(rename = "tiff")]
 	Tiff,
+	#[serde(rename = "webp")]
 	Webp,
 }
 

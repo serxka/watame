@@ -1,7 +1,9 @@
-use actix_files::Files;
-use actix_web::{middleware::Logger, web::Data, App, HttpServer};
-use log::LevelFilter;
 use std::io::Read;
+
+use actix_cors::Cors;
+use actix_files::Files;
+use actix_web::{middleware, web::Data, App, HttpServer};
+use log::LevelFilter;
 
 mod database;
 mod error;
@@ -78,9 +80,14 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 	HttpServer::new(move || {
 		use actix_web::web::{delete, get, post, resource, QueryConfig};
 		use pages::*;
+		let cors = Cors::default()
+			.allow_any_origin()
+			.allow_any_method()
+			.max_age(3600);
 
 		App::new()
-			.wrap(Logger::new("\t%a\t\"%r\"\t%s\t%b\t%Dms"))
+			.wrap(cors)
+			.wrap(middleware::Logger::new("\t%a\t\"%r\"\t%s\t%b\t%Dms"))
 			.app_data(Data::new(db_pool.clone()))
 			.app_data(Data::new(run_settings.clone()))
 			.app_data(
