@@ -42,6 +42,8 @@ pub struct Settings {
 	pub database_credentials: (String, String),
 	pub database_name: String,
 	pub storage_root: String,
+	/// Max payload of multipart structures in KiB
+	pub max_payload: usize,
 
 	pub action: Action,
 }
@@ -54,6 +56,7 @@ impl std::default::Default for Settings {
 			database_credentials: ("postgres".to_owned(), "password".to_owned()),
 			database_name: "watame".to_owned(),
 			storage_root: "./storage/".to_owned(),
+			max_payload: 1024 * 64, // 64MiB
 			action: Action::default(),
 		}
 	}
@@ -86,6 +89,12 @@ impl Settings {
 		if let Ok(v) = std::env::var("WATAME_STORAGE_ROOT") {
 			settings.storage_root = v;
 		}
+		if let Ok(v) = std::env::var("WATAME_MAX_PAYLOAD") {
+			match v.parse() {
+				Ok(v) => settings.max_payload = v,
+				Err(_) => log::warn!("invalid database address format: '{}'", v),
+			}
+		}
 
 		settings.merge_cli_opts(CliOptions::from_args());
 
@@ -100,12 +109,14 @@ impl Settings {
 #[derive(Clone)]
 pub struct RunSettings {
 	pub storage_root: String,
+	pub max_payload: usize,
 }
 
 impl RunSettings {
 	pub fn from(settings: &Settings) -> Self {
 		Self {
 			storage_root: settings.storage_root.clone(),
+			max_payload: settings.max_payload,
 		}
 	}
 }

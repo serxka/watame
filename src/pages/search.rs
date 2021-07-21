@@ -3,7 +3,7 @@ use crate::database::Pool as DbPool;
 use crate::error::APIError;
 use crate::pages::error500;
 
-use actix_web::{web, HttpResponse};
+use actix_web::{http::header, web, HttpResponse};
 
 #[derive(Debug, Copy, Clone, serde::Deserialize)]
 pub enum PostSorting {
@@ -18,7 +18,7 @@ pub enum PostSorting {
 }
 
 fn default_tags() -> String {
-	"".into()
+	"[]".into()
 }
 fn default_page() -> u32 {
 	0
@@ -27,7 +27,7 @@ fn default_limit() -> u32 {
 	20
 }
 fn default_sort() -> PostSorting {
-	PostSorting::DateAscending
+	PostSorting::DateDescending
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -46,11 +46,21 @@ pub async fn get_search(
 	query: web::Query<SearchPostQuery>,
 	pool: web::Data<DbPool>,
 ) -> Result<HttpResponse, APIError> {
-	// Parse and convert the tags
 	let tags: Vec<&str> =
 		serde_json::from_str(&query.tags).map_err(|_| APIError::BadRequestData)?;
-	if tags.len() >= 10 {
+	for tag in &tags {
+		if tag
+			.chars()
+			.any(|c| matches!(c, ' ' | '|' | '(' | ')'))
+		{
+			return Err(APIError::BadTags);
+		}
+	}
+	if tags.len() > 10 {
 		return Err(APIError::TagLimit);
+	}
+	if query.limit > 50 {
+		return Err(APIError::PageSize);
 	}
 
 	// Query database for post
@@ -62,17 +72,16 @@ pub async fn get_search(
 		.await
 		.map_err(|e| error500(&format!("get_search:select_tags {:?}", query), Box::new(e)))?;
 
-	if posts.len() == 0 { // No posts where found
-	} else { // We found some posts
+	if posts.len() == 0 {
+		Ok(HttpResponse::NotFound()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(r#"{"error":"no posts found"}"#))
+	} else {
+		Ok(HttpResponse::Ok()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(
+				serde_json::to_vec(&posts)
+					.map_err(|e| error500("get_search:json serialize", Box::new(e)))?,
+			))
 	}
-	// // Check to see if we actually found a post
-	// match post {
-	// 	Some(x) => Ok(HttpResponse::Ok()
-	// 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-	// 		.body(serde_json::to_string(&x).map_err(|e| error500(Box::new(e)))?)),
-	// 	None => Ok(HttpResponse::NotFound()
-	// 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-	// 		.body(r#"{"error":"post not found"}"#)),
-	// }
-	unimplemented!()
 }

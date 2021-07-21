@@ -22,6 +22,10 @@ pub enum APIError {
 	TagLimit,
 	#[display(fmt = r#"{{"error":"one or more tags contained invalid characters"}}"#)]
 	BadTags,
+	#[display(
+		fmt = r#"{{"error":"too many items per page request, please reduce amount and try again"}}"#
+	)]
+	PageSize,
 }
 
 impl error::ResponseError for APIError {
@@ -42,6 +46,7 @@ impl error::ResponseError for APIError {
 			Self::MimeType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
 			Self::TagLimit => StatusCode::BAD_REQUEST,
 			Self::BadTags => StatusCode::BAD_REQUEST,
+			Self::PageSize => StatusCode::BAD_REQUEST,
 		}
 	}
 }

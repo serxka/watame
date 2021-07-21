@@ -7,7 +7,7 @@ CREATE TABLE "posts"
     "id"           bigserial NOT NULL,
     "upload_date"  timestamp with time zone DEFAULT now(),
     "filename"     text NOT NULL,
-    "path"         char(4) NOT NULL,
+    "path"         char(2) NOT NULL,
     "ext"          text NOT NULL,
     "size"         integer NOT NULL,
     "width"        integer NOT NULL,

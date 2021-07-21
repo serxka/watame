@@ -95,6 +95,17 @@ impl<'a> pg::types::FromSql<'a> for ImageExtension {
 	}
 }
 
+impl PostSorting {
+	pub fn to_sql(&self) -> &str {
+		match self {
+			PostSorting::DateAscending => "ORDER BY upload_date ASC, id ASC",
+			PostSorting::DateDescending => "ORDER BY upload_date DESC, id DESC",
+			PostSorting::VoteAscending => "ORDER BY score ASC, id ASC",
+			PostSorting::VoteDescending => "ORDER BY score DESC, id DESC",
+		}
+	}
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Post {
 	pub id: i64,
@@ -140,7 +151,7 @@ impl Post {
 		client: &pg::Client,
 		id: i64,
 	) -> Result<Option<Self>, DatabaseError> {
-		let query = "SELECT id, poster FROM posts WHERE id=$1";
+		let query = "SELECT * FROM posts WHERE id=$1";
 		let row = client
 			.query_opt(query, &[&id])
 			.await
@@ -158,10 +169,42 @@ impl Post {
 		limit: u32,
 		sorting: PostSorting,
 	) -> Result<Vec<Self>, DatabaseError> {
-		let query = "SELECT * FROM posts WHERE tags @@ $1::tsquery;";
+		// If there are no tags, then run other version
+		if tags.len() == 0 {
+			return Self::select_tags_empty(client, page, limit, sorting).await;
+		}
+		let query = format!(
+			"SELECT * FROM posts WHERE tags @@ $1 {} OFFSET {} LIMIT {}",
+			sorting.to_sql(),
+			page * limit,
+			limit
+		);
 		let tags: String = tags.iter().flat_map(|s| s.chars().chain([' '])).collect();
 		let rows = client
-			.query(query, &[&tags])
+			.query(query.as_str(), &[&tags])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		let mut posts = Vec::new();
+		for row in rows {
+			posts.push(Self::serialise(&row));
+		}
+		Ok(posts)
+	}
+
+	async fn select_tags_empty(
+		client: &pg::Client,
+		page: u32,
+		limit: u32,
+		sorting: PostSorting,
+	) -> Result<Vec<Self>, DatabaseError> {
+		let query = format!(
+			"SELECT * FROM posts {} OFFSET {} LIMIT {}",
+			sorting.to_sql(),
+			page * limit,
+			limit
+		);
+		let rows = client
+			.query(query.as_str(), &[])
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
 		let mut posts = Vec::new();
@@ -176,7 +219,7 @@ impl Post {
 		client: &pg::Client,
 		new_path: &str,
 	) -> Result<(), DatabaseError> {
-		debug_assert!(new_path.len() == 4);
+		debug_assert!(new_path.len() == 2);
 		let query = "UPDATE posts SET path=$1 WHERE id=$2";
 		client
 			.execute(query, &[&new_path, &self.id])

@@ -2,12 +2,11 @@ CREATE TABLE "users"
 (
     "id"          bigserial NOT NULL,
     "name"        varchar(24) NOT NULL,
-    "email"       text NOT NULL,
-    "pass"        char(60) NOT NULL,
-    "picture_dir" char(4) NOT NULL,
-    CONSTRAINT "PK_userid" PRIMARY KEY ( "id" )
+    "email"       text NULL,
+    "pass"        bytea NOT NULL,
+    "picture"     text NOT NULL DEFAULT '/s/pfp/default.png',
+    CONSTRAINT "PK_userid" PRIMARY KEY ( "id" ),
+    UNIQUE (name)
 );
 
-INSERT INTO users VALUES 
-    ('0', 'serxka', 'serxka@example.com', 'password!', '0001')
-;
+INSERT INTO users (id, name, pass) VALUES (0, 'wadmin', 'password!');

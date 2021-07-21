@@ -1,3 +1,4 @@
+use async_std::fs;
 use std::path::PathBuf;
 
 use crate::database as db;
@@ -11,34 +12,20 @@ use actix_web::{http::header, web, HttpResponse};
 use futures::{StreamExt, TryStreamExt};
 
 fn image_path(id: i64) -> String {
-	let mut x = 0u16;
-	x ^= (id >> 0) as u16;
-	x ^= (id >> 16) as u16;
-	x ^= (id >> 32) as u16;
-	x ^= (id >> 48) as u16;
-	format!("{:04x}", x - 2)
+	format!("{:02x}", id >> 16)
 }
 
-const UPLOAD_PAGE_HTML: &'static str = r#"
-<!DOCTYPE html>
-<html>
-<head>
-	<title>Upload</title>
-</head>
-<body>
-<form method="POST" action="/post" enctype="multipart/form-data">
-	<input type="file" name="image">
-	<input type="textarea" name="data">
-	<button type="submit">Submit</button>
-</form>
-</body>
-</html>
-"#;
+fn format_paths(root: &str, subfolder: &str, id: i64, filename: &str) -> (PathBuf, PathBuf) {
+	// File path for the primary image
+	let img_path: PathBuf = [root, "img", &subfolder, &format!("{}-{}", id, filename)]
+		.iter()
+		.collect();
+	// File path for the smaller thumbnail
+	let tmb_path: PathBuf = [root, "tmb", &subfolder, &format!("{}-thumbnail.jpg", id)]
+		.iter()
+		.collect();
 
-pub async fn get_upload() -> Result<HttpResponse, APIError> {
-	Ok(HttpResponse::Ok()
-		.append_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
-		.body(UPLOAD_PAGE_HTML))
+	(img_path, tmb_path)
 }
 
 #[derive(serde::Deserialize)]
@@ -81,6 +68,7 @@ pub async fn get_post(
 pub async fn delete_post(
 	query: web::Query<IdPostQuery>,
 	pool: web::Data<DbPool>,
+	settings: web::Data<RunSettings>,
 ) -> Result<HttpResponse, APIError> {
 	// Verify we haven't been given a negative ID
 	if query.id < 0 {
@@ -98,7 +86,8 @@ pub async fn delete_post(
 
 	// if it exists and we are the owner we can delete it
 	match post {
-		Some(_post) => {
+		Some(post) => {
+			// Delete database entry
 			db::post::Post::delete_post(&conn, query.id)
 				.await
 				.map_err(|e| {
@@ -107,6 +96,17 @@ pub async fn delete_post(
 						Box::new(e),
 					)
 				})?;
+			// Delete the files from storage
+			let (img_path, tmb_path) =
+				format_paths(&settings.storage_root, &post.path, post.id, &post.filename);
+			let (img, tmb) = futures::join!(fs::remove_file(&img_path), fs::remove_file(&tmb_path));
+			img.map_err(|e| {
+				error500(&format!("image delete {}", img_path.display()), Box::new(e))
+			})?;
+			tmb.map_err(|e| {
+				error500(&format!("thumb delete {}", tmb_path.display()), Box::new(e))
+			})?;
+
 			Ok(HttpResponse::Ok()
 				.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 				.body(r#"{"success":"post deleted"}"#))
@@ -122,11 +122,12 @@ pub async fn post_upload(
 	pool: web::Data<DbPool>,
 	settings: web::Data<RunSettings>,
 ) -> Result<HttpResponse, APIError> {
-	let (image_data, filename, json) = process_multipart_image(payload).await?;
+	let (image_data, filename, json) =
+		process_multipart_image(payload, settings.max_payload).await?;
 
 	// Load image into memory for thumbnail/info/hashing
 	let image_type = image::guess_format(&image_data).map_err(|_| APIError::MimeType)?;
-	let image = image::load_from_memory_with_format(&image_data, image_type)
+	let mut image = image::load_from_memory_with_format(&image_data, image_type)
 		.map_err(|_| APIError::BadRequestData)?;
 
 	// Image metadata
@@ -134,7 +135,7 @@ pub async fn post_upload(
 	let file_size = image_data.len() as u32;
 
 	// Generate thumb
-	let thumbnail = image.thumbnail(320, 320);
+	let thumbnail = create_thumbnail(&mut image);
 
 	// Items from JSON description
 	let description = json
@@ -151,7 +152,7 @@ pub async fn post_upload(
 	// Check that tags are valid and add them to an array
 	let mut tags = Vec::new();
 	for tag in tags_json {
-		let s = tag.as_str().ok_or(APIError::BadRequestData)?.trim();
+		let s = tag.as_str().ok_or(APIError::BadRequestData)?;
 		if s.chars()
 			.any(|c| matches!(c, ' ' | '+' | '!' | '|' | '(' | ')'))
 		{
@@ -163,7 +164,7 @@ pub async fn post_upload(
 	let new_post = db::post::NewPost {
 		filename: &filename,
 		ext: image_type.into(),
-		path: "0000",
+		path: "00",
 		size: file_size as i32,
 		dimensions: (dimensions.0 as i32, dimensions.1 as i32),
 		description: description,
@@ -186,36 +187,19 @@ pub async fn post_upload(
 		.await
 		.map_err(|e| error500("post_upload:update_path", Box::new(e)))?;
 
-	// File path for the primary image
-	let img_path: PathBuf = [
-		&settings.storage_root,
-		"img",
-		&subfolder,
-		&format!("{}-{}", post.id, post.filename),
-	]
-	.iter()
-	.collect();
-	// File path for the smaller thumbnail
-	let tmb_path: PathBuf = [
-		&settings.storage_root,
-		"tmb",
-		&subfolder,
-		&format!("{}-thumbnail.jpg", post.id),
-	]
-	.iter()
-	.collect();
-
-	println!("{}", img_path.display());
-	println!("{}", tmb_path.display());
+	let (img_path, tmb_path) =
+		format_paths(&settings.storage_root, &subfolder, post.id, &post.filename);
 
 	// Async fs write the main image as it's already encoded
-	let img = async_std::fs::write(&img_path, &image_data);
+	let img = fs::write(&img_path, &image_data);
 	// We have to first encoder the thumbnail as a Jpeg before we can write it
 	let mut tmb_data = Vec::new();
+	let now = std::time::Instant::now();
 	thumbnail
-		.write_to(&mut tmb_data, image::ImageOutputFormat::Jpeg(70))
+		.write_to(&mut tmb_data, image::ImageOutputFormat::Jpeg(90))
 		.map_err(|e| error500("json encode", Box::new(e)))?;
-	let tmb = async_std::fs::write(&tmb_path, &tmb_data);
+	println!("{:?}", now.elapsed());
+	let tmb = fs::write(&tmb_path, &tmb_data);
 
 	// Take these two futures and wait on them
 	let (img, tmb) = futures::join!(img, tmb);
@@ -230,10 +214,9 @@ pub async fn post_upload(
 		))
 }
 
-const UPLOAD_MAX_DATA: usize = 1024 * 1024 * 32; // 32MiB, both image and JSON data
-
 async fn process_multipart_image(
 	mut payload: Multipart,
+	maximum_size: usize,
 ) -> Result<(Vec<u8>, String, serde_json::Value), APIError> {
 	// Get the multipart data
 	let mut image_data = Vec::new();
@@ -251,7 +234,7 @@ async fn process_multipart_image(
 		// Counter how many bytes and return err if over sized
 		let mut count_bytes = |new_bytes: usize| -> Result<(), APIError> {
 			bytes_read += new_bytes;
-			if bytes_read >= UPLOAD_MAX_DATA {
+			if bytes_read >= maximum_size * 1024 {
 				Err(APIError::PayloadSize)
 			} else {
 				Ok(())
@@ -288,4 +271,21 @@ async fn process_multipart_image(
 		}
 	}
 	Ok((image_data, filename, json))
+}
+
+fn create_thumbnail(image: &mut image::DynamicImage) -> image::DynamicImage {
+	use image::{imageops, DynamicImage};
+	const THUMB_SIZE: u32 = 320;
+
+	let dimensions = image::GenericImageView::dimensions(image);
+	let sub = if dimensions.0 < dimensions.1 {
+		imageops::crop(image, 0, dimensions.0 / 4, dimensions.0, dimensions.0)
+	} else if dimensions.0 >= dimensions.1 {
+		imageops::crop(image, dimensions.1 / 4, 0, dimensions.1, dimensions.1)
+	} else {
+		unreachable!()
+	};
+	DynamicImage::ImageRgba8(imageops::thumbnail(&sub, THUMB_SIZE, THUMB_SIZE))
+	// Alternative thumbnail creation
+	// let thumbnail = image.thumbnail(320, 320);
 }

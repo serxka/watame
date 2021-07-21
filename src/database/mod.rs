@@ -1,5 +1,6 @@
 pub mod error;
 pub mod post;
+// pub mod user;
 
 pub use deadpool_postgres::tokio_postgres as pg;
 pub use deadpool_postgres::Pool;

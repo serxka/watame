@@ -44,7 +44,7 @@ async fn main() -> std::io::Result<()> {
 		Action::CreateFolders => {
 			let image_dirs = |root| {
 				for i in 0..256 {
-					let path = format!("{}/{:04x}", root, i);
+					let path = format!("{}/{:02x}", root, i);
 					match std::fs::create_dir_all(&path) {
 						Ok(_) => {}
 						Err(e) => {
@@ -56,6 +56,7 @@ async fn main() -> std::io::Result<()> {
 			};
 			image_dirs(format!("{}/img", settings.storage_root));
 			image_dirs(format!("{}/tmb", settings.storage_root));
+			image_dirs(format!("{}/pfp", settings.storage_root));
 		}
 	}
 	Ok(())
@@ -94,7 +95,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			.service(resource("/search").route(get().to(search::get_search)))
 			.service(Files::new("/s", &storage_root))
 			// Debugging routes
-			.service(resource("/upload").route(get().to(post::get_upload)))
+			.service(resource("/upload").route(get().to(pages::upload_post_html)))
 	})
 	.listen(http_listener)?
 	.run()
