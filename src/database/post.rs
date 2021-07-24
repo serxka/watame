@@ -1,131 +1,257 @@
-pub use deadpool_postgres::tokio_postgres as pg;
+use pg::types::ToSql;
 
-use crate::database::DatabaseError;
+use crate::database::{enums::*, pg, tag::Tags, DatabaseError};
 use crate::pages::search::PostSorting;
 
-#[derive(Debug, serde::Serialize)]
-pub enum ImageExtension {
-	#[serde(rename = "bmp")]
-	Bmp,
-	#[serde(rename = "gif")]
-	Gif,
-	#[serde(rename = "jpg")]
-	Jpeg,
-	#[serde(rename = "png")]
-	Png,
-	#[serde(rename = "tiff")]
-	Tiff,
-	#[serde(rename = "webp")]
-	Webp,
-}
+pub type Timestamp = chrono::DateTime<chrono::offset::Utc>;
 
-impl ImageExtension {
-	pub fn as_str(&self) -> &'static str {
-		match self {
-			ImageExtension::Bmp => "bmp",
-			ImageExtension::Gif => "gif",
-			ImageExtension::Jpeg => "jpeg",
-			ImageExtension::Png => "png",
-			ImageExtension::Tiff => "tiff",
-			ImageExtension::Webp => "webp",
-		}
-	}
-
-	pub fn from_str(ext: &str) -> Option<ImageExtension> {
-		match ext {
-			"bmp" => Some(ImageExtension::Bmp),
-			"gif" => Some(ImageExtension::Gif),
-			"jpeg" => Some(ImageExtension::Jpeg),
-			"png" => Some(ImageExtension::Png),
-			"tiff" => Some(ImageExtension::Tiff),
-			"webp" => Some(ImageExtension::Webp),
-			_ => None,
-		}
-	}
-}
-
-impl std::convert::From<image::ImageFormat> for ImageExtension {
-	fn from(im: image::ImageFormat) -> Self {
-		use image::ImageFormat;
-		match im {
-			ImageFormat::Bmp => ImageExtension::Bmp,
-			ImageFormat::Gif => ImageExtension::Gif,
-			ImageFormat::Jpeg => ImageExtension::Jpeg,
-			ImageFormat::Png => ImageExtension::Png,
-			ImageFormat::Tiff => ImageExtension::Tiff,
-			ImageFormat::WebP => ImageExtension::Webp,
-			_ => panic!("unknown image format: {:?}", im),
-		}
-	}
-}
-
-impl std::fmt::Display for ImageExtension {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", self.as_str())
-	}
-}
-
-impl pg::types::ToSql for ImageExtension {
-	fn to_sql(
-		&self,
-		ty: &pg::types::Type,
-		w: &mut bytes::BytesMut,
-	) -> Result<pg::types::IsNull, Box<(dyn std::error::Error + Sync + Send + 'static)>> {
-		<&str as pg::types::ToSql>::to_sql(&self.as_str(), ty, w)
-	}
-	fn accepts(ty: &pg::types::Type) -> bool {
-		use pg::types::Type;
-		match *ty {
-			Type::ANY => true,
-			_ => true,
-		}
-	}
-
-	pg::types::to_sql_checked!();
-}
-
-impl<'a> pg::types::FromSql<'a> for ImageExtension {
-	fn from_sql(
-		ty: &pg::types::Type,
-		raw: &'a [u8],
-	) -> Result<ImageExtension, Box<(dyn std::error::Error + Sync + Send + 'static)>> {
-		let s = <&str as pg::types::FromSql>::from_sql(ty, raw)?;
-		ImageExtension::from_str(s).ok_or(Box::new(DatabaseError::UnknownEnum))
-	}
-	fn accepts(ty: &pg::types::Type) -> bool {
-		use pg::types::Type;
-		match *ty {
-			Type::VARCHAR | Type::TEXT | Type::BPCHAR | Type::ANYENUM | Type::UNKNOWN => true,
-			_ => false,
-		}
-	}
-}
-
-impl PostSorting {
-	pub fn to_sql(&self) -> &str {
-		match self {
-			PostSorting::DateAscending => "ORDER BY upload_date ASC, id ASC",
-			PostSorting::DateDescending => "ORDER BY upload_date DESC, id DESC",
-			PostSorting::VoteAscending => "ORDER BY score ASC, id ASC",
-			PostSorting::VoteDescending => "ORDER BY score DESC, id DESC",
-		}
-	}
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct Post {
+#[derive(serde::Serialize)]
+pub struct PostFull {
 	pub id: i64,
-	pub upload_date: chrono::DateTime<chrono::offset::Utc>,
+	pub poster: i32,
+	pub tag_vector: Tags,
+	pub create_date: Timestamp,
+	pub modified_date: Timestamp,
+	pub description: Option<String>,
+	pub rating: Rating,
+	pub score: i32,
+	pub views: i32,
+	pub source: Option<String>,
 	pub filename: String,
 	pub path: String,
 	pub ext: ImageExtension,
 	pub size: i32,
 	pub width: i32,
 	pub height: i32,
-	pub description: String,
-	pub tags: Vec<String>,
-	pub score: i32,
-	pub poster: i64,
+	pub is_deleted: bool,
+}
+
+pub enum Post {
+	Partial(i64),
+	Full(PostFull),
+}
+
+impl Post {
+	pub fn get_id(&self) -> i64 {
+		match self {
+			Self::Partial(id) => *id,
+			Self::Full(post) => post.id,
+		}
+	}
+
+	pub fn get_full(self) -> PostFull {
+		match self {
+			Self::Full(post) => post,
+			_ => panic!("tried to get full post when wasn't full!"),
+		}
+	}
+
+	fn if_full<F: FnOnce(&mut PostFull)>(&mut self, f: F) {
+		match self {
+			Post::Partial(_) => {}
+			Post::Full(ref mut p) => f(p),
+		}
+	}
+
+	fn serialise<'a>(row: &'a pg::row::Row) -> Self {
+		// Try and get the 17th column (is_deleted) to see if a full post or partial
+		match row.try_get::<usize, bool>(16) {
+			Ok(_) => Post::Full(Self::serialise_full(row)),
+			Err(_) => Post::Partial(row.get(0)),
+		}
+	}
+
+	pub fn serialise_full<'a>(row: &'a pg::row::Row) -> PostFull {
+		PostFull {
+			id: row.get(0),
+			poster: row.get(1),
+			tag_vector: row.get(2),
+			create_date: row.get(3),
+			modified_date: row.get(4),
+			description: row.get(5),
+			rating: row.get(6),
+			score: row.get(7),
+			views: row.get(8),
+			source: row.get(9),
+			filename: row.get(10),
+			path: row.get(11),
+			ext: row.get(12),
+			size: row.get(13),
+			width: row.get(14),
+			height: row.get(15),
+			is_deleted: row.get(16),
+		}
+	}
+}
+
+impl Post {
+	pub async fn select_post(client: &pg::Client, id: i64) -> Result<Option<Self>, DatabaseError> {
+		let query = "SELECT * FROM posts WHERE id=$1 AND is_deleted='false'";
+		let row = client
+			.query_opt(query, &[&id])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		match row {
+			Some(row) => Ok(Some(Self::serialise(&row))),
+			None => Ok(None),
+		}
+	}
+
+	pub async fn select_can_delete(
+		client: &pg::Client,
+		id: i64,
+		user: i32,
+	) -> Result<Option<(bool, Self)>, DatabaseError> {
+		// Select the post to see if it exists, also get the poster id
+		let params: [&(dyn ToSql + Sync); 1] = [&id];
+		let query = "SELECT id,poster FROM posts WHERE id=$1 AND is_deleted='false'";
+		let row1 = client.query_opt(query, &params);
+		// Select the user and see if they have permissions
+		let params: [&(dyn ToSql + Sync); 1] = [&user];
+		let query = "SELECT * FROM users WHERE id=$1";
+		let row2 = client.query_one(query, &params);
+		// Await on these
+		let (post_row, user_row) =
+			futures::try_join!(row1, row2).map_err(|e| DatabaseError::from(e))?;
+		match post_row {
+			Some(post) => {
+				let perms = user_row.get(5);
+				let poster: i32 = post.get(1);
+				let post = Self::serialise(&post);
+				if poster == user || matches!(perms, Perms::Moderator | Perms::Admin) {
+					Ok(Some((true, post)))
+				} else {
+					Ok(Some((false, post)))
+				}
+			}
+			None => Ok(None),
+		}
+	}
+
+	pub async fn select_is_deleted(client: &pg::Client) -> Result<Vec<PostFull>, DatabaseError> {
+		let query = "SELECT * FROM posts WHERE is_deleted='true'";
+		let rows = client
+			.query(query, &[])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		let mut posts = Vec::new();
+		for row in rows {
+			posts.push(Self::serialise_full(&row));
+		}
+		Ok(posts)
+	}
+
+	pub async fn select_post_random(client: &pg::Client) -> Result<Option<Self>, DatabaseError> {
+		let query = "SELECT * FROM posts ORDER BY RANDOM() LIMIT 1 WHERE is_deleted='false'";
+		let row = client
+			.query_opt(query, &[])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		match row {
+			Some(row) => Ok(Some(Self::serialise(&row))),
+			None => Ok(None),
+		}
+	}
+
+	pub async fn select_fulltext_tags(
+		client: &pg::Client,
+		tags: &[&str],
+		page: u32,
+		limit: u32,
+		sorting: PostSorting,
+	) -> Result<Vec<PostFull>, DatabaseError> {
+		// If there are no tags, then run other version
+		if tags.len() == 0 {
+			return Self::select_fulltext_empty(client, page, limit, sorting).await;
+		}
+		let query = format!(
+			"SELECT * FROM posts WHERE tag_vector @@ to_tsquery('tag_parser', $1) AND is_deleted='false' {} OFFSET {} LIMIT {}",
+			sorting.to_sql(),
+			page * limit,
+			limit
+		);
+		let tags: String = tags.iter().flat_map(|s| s.chars().chain([','])).collect();
+		let rows = client
+			.query(query.as_str(), &[&tags])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		let mut posts = Vec::new();
+		for row in rows {
+			posts.push(Self::serialise_full(&row));
+		}
+		Ok(posts)
+	}
+
+	async fn select_fulltext_empty(
+		client: &pg::Client,
+		page: u32,
+		limit: u32,
+		sorting: PostSorting,
+	) -> Result<Vec<PostFull>, DatabaseError> {
+		let query = format!(
+			"SELECT * FROM posts WHERE is_deleted='false' {} OFFSET {} LIMIT {}",
+			sorting.to_sql(),
+			page * limit,
+			limit
+		);
+		let rows = client
+			.query(query.as_str(), &[])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		let mut posts = Vec::new();
+		for row in rows {
+			posts.push(Self::serialise_full(&row));
+		}
+		Ok(posts)
+	}
+
+	pub async fn update_path(
+		&mut self,
+		client: &pg::Client,
+		new_path: &str,
+	) -> Result<(), DatabaseError> {
+		let query = "UPDATE posts SET path=$1 WHERE id=$2";
+		client
+			.execute(query, &[&new_path, &self.get_id()])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		self.if_full(|p| {
+			p.path.clear();
+			p.path.push_str(new_path);
+		});
+		Ok(())
+	}
+
+	pub async fn update_is_deleted(
+		&mut self,
+		client: &pg::Client,
+		is_deleted: bool,
+	) -> Result<(), DatabaseError> {
+		let query = "UPDATE posts SET is_deleted=$1 WHERE id=$2";
+		client
+			.execute(query, &[&is_deleted, &self.get_id()])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		self.if_full(|p| {
+			p.is_deleted = is_deleted;
+		});
+		Ok(())
+	}
+
+	pub async fn delete_post(&self, client: &pg::Client) -> Result<(), DatabaseError> {
+		let query = "DELETE FROM posts WHERE id=$1";
+		client
+			.execute(query, &[&self.get_id()])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		Ok(())
+	}
+}
+
+impl std::convert::From<i64> for Post {
+	fn from(id: i64) -> Post {
+		Post::Partial(id)
+	}
 }
 
 #[derive(Debug)]
@@ -137,157 +263,17 @@ pub struct NewPost<'a> {
 	pub dimensions: (i32, i32),
 	pub description: &'a str,
 	pub tags: &'a [&'a str],
-	pub poster: i64,
-}
-
-impl Post {
-	pub async fn select_post(client: &pg::Client, id: i64) -> Result<Option<Self>, DatabaseError> {
-		let query = "SELECT * FROM posts WHERE id=$1";
-		let row = client
-			.query_opt(query, &[&id])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		match row {
-			Some(row) => Ok(Some(Self::serialise(&row))),
-			None => Ok(None),
-		}
-	}
-
-	pub async fn select_post_random(client: &pg::Client) -> Result<Option<Self>, DatabaseError> {
-		let query = "SELECT * FROM posts ORDER BY RANDOM() LIMIT 1";
-		let row = client
-			.query_opt(query, &[])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		match row {
-			Some(row) => Ok(Some(Self::serialise(&row))),
-			None => Ok(None),
-		}
-	}
-
-	pub async fn select_id_poster(
-		client: &pg::Client,
-		id: i64,
-	) -> Result<Option<Self>, DatabaseError> {
-		let query = "SELECT * FROM posts WHERE id=$1";
-		let row = client
-			.query_opt(query, &[&id])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		match row {
-			Some(row) => Ok(Some(Self::serialise(&row))),
-			None => Ok(None),
-		}
-	}
-
-	pub async fn select_tags(
-		client: &pg::Client,
-		tags: &[&str],
-		page: u32,
-		limit: u32,
-		sorting: PostSorting,
-	) -> Result<Vec<Self>, DatabaseError> {
-		// If there are no tags, then run other version
-		if tags.len() == 0 {
-			return Self::select_tags_empty(client, page, limit, sorting).await;
-		}
-		let query = format!(
-			"SELECT * FROM posts WHERE tags @@ $1 {} OFFSET {} LIMIT {}",
-			sorting.to_sql(),
-			page * limit,
-			limit
-		);
-		let tags: String = tags.iter().flat_map(|s| s.chars().chain([' '])).collect();
-		let rows = client
-			.query(query.as_str(), &[&tags])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		let mut posts = Vec::new();
-		for row in rows {
-			posts.push(Self::serialise(&row));
-		}
-		Ok(posts)
-	}
-
-	async fn select_tags_empty(
-		client: &pg::Client,
-		page: u32,
-		limit: u32,
-		sorting: PostSorting,
-	) -> Result<Vec<Self>, DatabaseError> {
-		let query = format!(
-			"SELECT * FROM posts {} OFFSET {} LIMIT {}",
-			sorting.to_sql(),
-			page * limit,
-			limit
-		);
-		let rows = client
-			.query(query.as_str(), &[])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		let mut posts = Vec::new();
-		for row in rows {
-			posts.push(Self::serialise(&row));
-		}
-		Ok(posts)
-	}
-
-	pub async fn update_path(
-		&mut self,
-		client: &pg::Client,
-		new_path: &str,
-	) -> Result<(), DatabaseError> {
-		debug_assert!(new_path.len() == 2);
-		let query = "UPDATE posts SET path=$1 WHERE id=$2";
-		client
-			.execute(query, &[&new_path, &self.id])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		self.path.clear();
-		self.path.push_str(new_path);
-		Ok(())
-	}
-
-	pub async fn delete_post(client: &pg::Client, id: i64) -> Result<(), DatabaseError> {
-		let query = "DELETE FROM posts WHERE id=$1";
-		client
-			.execute(query, &[&id])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
-		Ok(())
-	}
-
-	fn serialise<'a>(row: &'a pg::row::Row) -> Self {
-		Post {
-			id: row.get(0),
-			upload_date: row.get::<usize, chrono::DateTime<chrono::offset::Utc>>(1),
-			filename: row.get(2),
-			path: row.get(3),
-			ext: row.get(4),
-			size: row.get(5),
-			width: row.get(6),
-			height: row.get(7),
-			description: row.get(8),
-			tags: row
-				.get::<usize, &'a str>(9)
-				.trim()
-				.split(' ')
-				.map(|s| s.to_owned())
-				.collect(),
-			score: row.get(10),
-			poster: row.get(11),
-		}
-	}
+	pub poster: i32,
 }
 
 impl NewPost<'_> {
-	pub async fn insert_into(&self, client: &pg::Client) -> Result<Post, DatabaseError> {
-		let query = "INSERT INTO posts (filename, path, ext, size, width, height, description, tags, poster) VALUES\
-		             ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *";
+	pub async fn insert_into(&self, client: &pg::Client) -> Result<PostFull, DatabaseError> {
+		let query = "INSERT INTO posts (filename, path, ext, size, width, height, description, tag_vector, poster) VALUES\
+		             ($1, $2, $3, $4, $5, $6, $7, to_tsvector('tag_parser', $8), $9) RETURNING *";
 		let tags: String = self
 			.tags
 			.iter()
-			.flat_map(|s| s.chars().chain([' ']))
+			.flat_map(|s| s.chars().chain([',']))
 			.collect();
 
 		let row = client
@@ -307,6 +293,6 @@ impl NewPost<'_> {
 			)
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
-		Ok(Post::serialise(&row))
+		Ok(Post::serialise_full(&row))
 	}
 }

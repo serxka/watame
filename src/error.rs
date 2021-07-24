@@ -3,6 +3,30 @@ use actix_web::{
 };
 use derive_more::{Display, Error};
 
+#[macro_export]
+macro_rules! try500 {
+	($e:expr) => {
+		$e.map_err(|err| {
+			log::error!(
+				"internal error has occurred!\n[MESSAGE]: {}\n[ERROR]: {:?}",
+				"(no message provided)",
+				err
+			);
+			APIError::InternalError
+		})?
+	};
+	($e:expr,$($args:tt)+) => {
+		$e.map_err(|err| {
+			log::error!(
+				"internal error has occurred!\n[MESSAGE]: {}\n[ERROR]: {:?}",
+				format_args!($($args)+),
+				err
+			);
+			APIError::InternalError
+		})?
+	};
+}
+
 #[allow(unused)]
 #[derive(Debug, Display, Error)]
 pub enum APIError {

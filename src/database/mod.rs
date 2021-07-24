@@ -1,5 +1,7 @@
+pub mod enums;
 pub mod error;
 pub mod post;
+pub mod tag;
 // pub mod user;
 
 pub use deadpool_postgres::tokio_postgres as pg;
@@ -29,7 +31,9 @@ pub async fn install_schema(mut settings: crate::settings::Settings) {
 		.expect("failed to get connection from pool");
 
 	let scripts = [
+		"CREATE EXTENSION tag_parser;",
 		include_str!("../../sql/create_users.sql"),
+		include_str!("../../sql/create_tags.sql"),
 		include_str!("../../sql/create_posts.sql"),
 	];
 

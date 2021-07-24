@@ -56,6 +56,7 @@ async fn main() -> std::io::Result<()> {
 					}
 				}
 			};
+			println!("Creating folders...");
 			image_dirs(format!("{}/img", settings.storage_root));
 			image_dirs(format!("{}/tmb", settings.storage_root));
 			image_dirs(format!("{}/pfp", settings.storage_root));
@@ -99,10 +100,11 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 					.route(get().to(post::get_post))
 					.route(post().to(post::post_upload)),
 			)
+			.service(resource("/purge").route(delete().to(post::delete_purge_posts)))
 			.service(resource("/search").route(get().to(search::get_search)))
 			.service(resource("/random").route(get().to(search::get_random_post)))
-			.service(Files::new("/s", &storage_root))
 			// Debugging routes
+			.service(Files::new("/s", &storage_root))
 			.service(resource("/upload").route(get().to(pages::upload_post_html)))
 	})
 	.listen(http_listener)?

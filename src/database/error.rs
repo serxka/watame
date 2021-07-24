@@ -3,8 +3,6 @@ use derive_more::{Display, Error};
 
 #[derive(Debug, Display, Error)]
 pub enum DatabaseError {
-	#[display(fmt = "an enum of unknown value was returned")]
-	UnknownEnum,
 	PostgresErr(pg::error::Error),
 }
 

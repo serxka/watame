@@ -1,7 +1,5 @@
-use crate::database as db;
-use crate::database::Pool as DbPool;
-use crate::error::APIError;
-use crate::pages::error500;
+use crate::database::{post::Post, Pool as DbPool};
+use crate::{error::APIError, try500};
 
 use actix_web::{http::header, web, HttpResponse};
 
@@ -49,9 +47,7 @@ pub async fn get_search(
 	let mut tags: Vec<&str> =
 		serde_json::from_str(&query.tags).map_err(|_| APIError::BadRequestData)?;
 	for i in 0..tags.len() {
-		if tags[i].chars().any(|c| matches!(c, ' ' | '|' | '(' | ')')) {
-			return Err(APIError::BadTags);
-		}
+		tags[i] = tags[i].trim();
 		if tags[i].is_empty() {
 			tags.remove(i);
 		}
@@ -64,13 +60,12 @@ pub async fn get_search(
 	}
 
 	// Query database for post
-	let conn = pool
-		.get()
-		.await
-		.map_err(|e| error500("get_search:db pool", Box::new(e)))?;
-	let posts = db::post::Post::select_tags(&conn, &tags, query.page, query.limit, query.sort)
-		.await
-		.map_err(|e| error500(&format!("get_search:select_tags {:?}", query), Box::new(e)))?;
+	let conn = try500!(pool.get().await, "get_search:db pool");
+	let posts = try500!(
+		Post::select_fulltext_tags(&conn, &tags, query.page, query.limit, query.sort).await,
+		"get_search:select_fulltext_tags {:?}",
+		query
+	);
 
 	if posts.len() == 0 {
 		Ok(HttpResponse::NotFound()
@@ -79,31 +74,29 @@ pub async fn get_search(
 	} else {
 		Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(
-				serde_json::to_vec(&posts)
-					.map_err(|e| error500("get_search:json serialize", Box::new(e)))?,
-			))
+			.body(try500!(
+				serde_json::to_vec(&posts),
+				"get_search:json serialize"
+			)))
 	}
 }
 
 pub async fn get_random_post(pool: web::Data<DbPool>) -> Result<HttpResponse, APIError> {
 	// Query database for post
-	let conn = pool
-		.get()
-		.await
-		.map_err(|e| error500("get_random_post:db pool", Box::new(e)))?;
-	let post = db::post::Post::select_post_random(&conn)
-		.await
-		.map_err(|e| error500("get_random_post:select_post_random", Box::new(e)))?;
+	let conn = try500!(pool.get().await, "get_search:db pool");
+	let post = try500!(
+		Post::select_post_random(&conn).await,
+		"get_random_post:select_post_random"
+	);
 
 	// Check to see if we actually found a post
 	match post {
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(
-				serde_json::to_string(&x)
-					.map_err(|e| error500("get_random_post:json serialize", Box::new(e)))?,
-			)),
+			.body(try500!(
+				serde_json::to_string(&x.get_full()),
+				"get_random_post:json serialize"
+			))),
 		None => Ok(HttpResponse::NotFound()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"no posts found"}"#)),

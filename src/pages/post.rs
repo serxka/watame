@@ -1,11 +1,13 @@
 use async_std::fs;
 use std::path::PathBuf;
 
-use crate::database as db;
-use crate::database::Pool as DbPool;
-use crate::error::APIError;
-use crate::pages::error500;
+use crate::database::{
+	post::{NewPost, Post},
+	Pool as DbPool,
+};
+
 use crate::settings::RunSettings;
+use crate::{error::APIError, try500};
 
 use actix_multipart::Multipart;
 use actix_web::{http::header, web, HttpResponse};
@@ -43,22 +45,21 @@ pub async fn get_post(
 	}
 
 	// Query database for post
-	let conn = pool
-		.get()
-		.await
-		.map_err(|e| error500("get_post:db pool", Box::new(e)))?;
-	let post = db::post::Post::select_post(&conn, query.id)
-		.await
-		.map_err(|e| error500(&format!("get_post:select_id {}", query.id), Box::new(e)))?;
+	let conn = try500!(pool.get().await, "get_post:db pool");
+	let post = try500!(
+		Post::select_post(&conn, query.id).await,
+		"get_post:select_id {}",
+		query.id
+	);
 
 	// Check to see if we actually found a post
 	match post {
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(
-				serde_json::to_string(&x)
-					.map_err(|e| error500("get_post:json serialize", Box::new(e)))?,
-			)),
+			.body(try500!(
+				serde_json::to_string(&x.get_full()),
+				"get_post:json serialize"
+			))),
 		None => Ok(HttpResponse::NotFound()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"post not found"}"#)),
@@ -68,7 +69,6 @@ pub async fn get_post(
 pub async fn delete_post(
 	query: web::Query<IdPostQuery>,
 	pool: web::Data<DbPool>,
-	settings: web::Data<RunSettings>,
 ) -> Result<HttpResponse, APIError> {
 	// Verify we haven't been given a negative ID
 	if query.id < 0 {
@@ -76,37 +76,23 @@ pub async fn delete_post(
 	}
 
 	// Query database for post
-	let conn = pool
-		.get()
-		.await
-		.map_err(|e| error500("delete_post:db pool", Box::new(e)))?;
-	let post = db::post::Post::select_id_poster(&conn, query.id)
-		.await
-		.map_err(|e| error500(&format!("delete_post:select_id {}", query.id), Box::new(e)))?;
+	let conn = try500!(pool.get().await, "delete_post:db pool");
+	let post = try500!(
+		Post::select_can_delete(&conn, query.id, 0).await,
+		"delete_post:select_id_poster {}",
+		query.id
+	);
 
 	// if it exists and we are the owner we can delete it
 	match post {
-		Some(post) => {
-			// Delete database entry
-			db::post::Post::delete_post(&conn, query.id)
-				.await
-				.map_err(|e| {
-					error500(
-						&format!("delete_post:delete_post {}", query.id),
-						Box::new(e),
-					)
-				})?;
-			// Delete the files from storage
-			let (img_path, tmb_path) =
-				format_paths(&settings.storage_root, &post.path, post.id, &post.filename);
-			let (img, tmb) = futures::join!(fs::remove_file(&img_path), fs::remove_file(&tmb_path));
-			img.map_err(|e| {
-				error500(&format!("image delete {}", img_path.display()), Box::new(e))
-			})?;
-			tmb.map_err(|e| {
-				error500(&format!("thumb delete {}", tmb_path.display()), Box::new(e))
-			})?;
-
+		Some((can_delete, mut post)) => {
+			if !can_delete {
+				return Err(APIError::Auth);
+			}
+			try500!(
+				post.update_is_deleted(&conn, true).await,
+				"delete_post:update_is_deleted"
+			);
 			Ok(HttpResponse::Ok()
 				.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 				.body(r#"{"success":"post deleted"}"#))
@@ -115,6 +101,33 @@ pub async fn delete_post(
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"post not found"}"#)),
 	}
+}
+
+pub async fn delete_purge_posts(
+	pool: web::Data<DbPool>,
+	settings: web::Data<RunSettings>,
+) -> Result<HttpResponse, APIError> {
+	let conn = try500!(pool.get().await, "delete_post:db pool");
+	let posts = try500!(
+		Post::select_is_deleted(&conn).await,
+		"delete_purge_posts:select"
+	);
+	for post in posts {
+		let (img_path, tmb_path) =
+			format_paths(&settings.storage_root, &post.path, post.id, &post.filename);
+		let post = Post::Partial(post.id);
+		let (img, tmb, pst) = futures::join!(
+			fs::remove_file(&img_path),
+			fs::remove_file(&tmb_path),
+			post.delete_post(&conn)
+		);
+		try500!(img, "image delete {}", img_path.display());
+		try500!(tmb, "thumb delete {}", tmb_path.display());
+		try500!(pst, "delete_post");
+	}
+	Ok(HttpResponse::Ok()
+		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+		.body(r#"{"success":"posts purged"}"#))
 }
 
 pub async fn post_upload(
@@ -153,15 +166,13 @@ pub async fn post_upload(
 	let mut tags = Vec::new();
 	for tag in tags_json {
 		let s = tag.as_str().ok_or(APIError::BadRequestData)?;
-		if s.chars()
-			.any(|c| matches!(c, ' ' | '+' | '!' | '|' | '(' | ')'))
-		{
+		if s.chars().any(|c| matches!(c, '+' | '!')) {
 			return Err(APIError::BadTags);
 		}
-		tags.push(s);
+		tags.push(s.trim());
 	}
 
-	let new_post = db::post::NewPost {
+	let new_post = NewPost {
 		filename: &filename,
 		ext: image_type.into(),
 		path: "00",
@@ -172,20 +183,18 @@ pub async fn post_upload(
 		poster: 0,
 	};
 
-	let conn = pool
-		.get()
-		.await
-		.map_err(|e| error500("post_upload:db pool", Box::new(e)))?;
-	let mut post = new_post.insert_into(&conn).await.map_err(|e| {
-		error500(
-			&format!("post_upload:insert_into {:?}", new_post),
-			Box::new(e),
-		)
-	})?;
+	let conn = try500!(pool.get().await, "delete_post:db pool");
+	let post = try500!(
+		new_post.insert_into(&conn).await,
+		"post_upload:insert_into {:?}",
+		new_post
+	);
+
 	let subfolder = image_path(post.id);
-	post.update_path(&conn, &subfolder)
-		.await
-		.map_err(|e| error500("post_upload:update_path", Box::new(e)))?;
+	try500!(
+		Post::Partial(post.id).update_path(&conn, &subfolder).await,
+		"post_upload:update_path"
+	);
 
 	let (img_path, tmb_path) =
 		format_paths(&settings.storage_root, &subfolder, post.id, &post.filename);
@@ -194,24 +203,23 @@ pub async fn post_upload(
 	let img = fs::write(&img_path, &image_data);
 	// We have to first encoder the thumbnail as a Jpeg before we can write it
 	let mut tmb_data = Vec::new();
-	let now = std::time::Instant::now();
-	thumbnail
-		.write_to(&mut tmb_data, image::ImageOutputFormat::Jpeg(90))
-		.map_err(|e| error500("json encode", Box::new(e)))?;
-	println!("{:?}", now.elapsed());
+	try500!(
+		thumbnail.write_to(&mut tmb_data, image::ImageOutputFormat::Jpeg(90)),
+		"jpeg encode"
+	);
 	let tmb = fs::write(&tmb_path, &tmb_data);
 
 	// Take these two futures and wait on them
 	let (img, tmb) = futures::join!(img, tmb);
-	img.map_err(|e| error500(&format!("image write {}", img_path.display()), Box::new(e)))?;
-	tmb.map_err(|e| error500(&format!("thumb write {}", tmb_path.display()), Box::new(e)))?;
+	try500!(img, "image write {}", img_path.display());
+	try500!(tmb, "thumb write {}", tmb_path.display());
 
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-		.body(
-			serde_json::to_string(&post)
-				.map_err(|e| error500("upload_post:json serialize", Box::new(e)))?,
-		))
+		.body(try500!(
+			serde_json::to_string(&post),
+			"upload_post:json serialize"
+		)))
 }
 
 async fn process_multipart_image(
