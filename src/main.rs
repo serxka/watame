@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()> {
 				println!("Dropping tables...");
 				database::drop_tables(settings).await;
 			} else {
-				println!("Canceled, tables not dropped");
+				println!("Cancelled, tables not dropped");
 			}
 		}
 		Action::CreateFolders => {
@@ -101,6 +101,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 					.route(post().to(post::post_upload)),
 			)
 			.service(resource("/purge").route(delete().to(post::delete_purge_posts)))
+			.service(resource("/tag").route(get().to(tag::get_info)))
 			.service(resource("/search").route(get().to(search::get_search)))
 			.service(resource("/random").route(get().to(search::get_random_post)))
 			// Debugging routes

@@ -3,12 +3,97 @@ use bytes::{buf::BufMut, BytesMut};
 use pg::types::{FromSql, IsNull, ToSql, Type};
 use std::borrow::ToOwned;
 
-use crate::database::pg;
+use crate::database::{pg, DatabaseError};
 
+#[derive(serde::Serialize)]
+pub struct Tag {
+	id: i64,
+	name: String,
+	count: i64,
+	ty: i16,
+}
+
+impl Tag {
+	fn deserialise<'a>(row: &'a pg::row::Row) -> Self {
+		Tag {
+			id: row.get(0),
+			name: row.get(1),
+			count: row.get(2),
+			ty: row.get(3),
+		}
+	}
+}
+
+impl Tag {
+	pub async fn select_tag_name(
+		client: &pg::Client,
+		name: &str,
+	) -> Result<Option<Tag>, DatabaseError> {
+		let query = "SELECT * FROM tags WHERE name = $1";
+		let row = client
+			.query_opt(query, &[&name])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		match row {
+			Some(row) => Ok(Some(Tag::deserialise(&row))),
+			None => Ok(None),
+		}
+	}
+
+	pub async fn insert_empty(
+		client: &pg::Client,
+		tag: &str,
+		ty: i16,
+	) -> Result<(), DatabaseError> {
+		let query = "INSERT INTO tags (name, type) VALUES ($1, $2)";
+		client
+			.execute(query, &[&tag, &ty])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		Ok(())
+	}
+
+	pub async fn update_tag_count(
+		client: &pg::Client,
+		tags: &[&str],
+	) -> Result<u64, DatabaseError> {
+		let statement = client
+			.prepare_typed(
+				"INSERT INTO tags (name, count) VALUES ($1, 1) ON CONFLICT (name) DO UPDATE SET count = tags.count+1",
+				&[Type::TEXT],
+			)
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		let mut futures = Vec::with_capacity(tags.len());
+		for tag in tags {
+			let stmt = &statement;
+			let fut = async move { client.execute(stmt, &[&tag]).await };
+			futures.push(fut);
+		}
+		let mut modified = 0;
+		for rows in futures::future::join_all(futures).await {
+			modified += rows.map_err(|e| DatabaseError::from(e))?;
+		}
+		Ok(modified)
+	}
+
+	pub async fn update_decrease_counts(
+		client: &pg::Client,
+		tags: &[String],
+	) -> Result<u64, DatabaseError> {
+		let query = "UPDATE tags SET count = count-1 WHERE name = ANY($1)";
+		client
+			.execute(query, &[&tags])
+			.await
+			.map_err(|e| DatabaseError::from(e))
+	}
+}
+
+/// A struct for representing and deserialising tags on posts
 #[derive(Debug, serde::Serialize)]
-pub struct Tags(pub Vec<String>);
+pub struct TagVector(pub Vec<String>);
 
-impl ToSql for Tags {
+impl ToSql for TagVector {
 	fn to_sql(
 		&self,
 		_ty: &Type,
@@ -25,7 +110,7 @@ impl ToSql for Tags {
 	pg::types::to_sql_checked!();
 }
 
-impl<'a> FromSql<'a> for Tags {
+impl<'a> FromSql<'a> for TagVector {
 	fn from_sql(
 		_ty: &Type,
 		raw: &'a [u8],
@@ -34,7 +119,7 @@ impl<'a> FromSql<'a> for Tags {
 			.into_iter()
 			.map(|s| s.to_owned())
 			.collect();
-		Ok(Tags(tags))
+		Ok(TagVector(tags))
 	}
 	fn accepts(ty: &Type) -> bool {
 		matches!(*ty, Type::TS_VECTOR | Type::TSQUERY)

@@ -1,5 +1,6 @@
 pub mod post;
 pub mod search;
+pub mod tag;
 // pub mod user;
 
 use actix_web::{http::header, HttpResponse};

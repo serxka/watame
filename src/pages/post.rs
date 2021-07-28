@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::database::{
 	post::{NewPost, Post},
+	tag::Tag,
 	Pool as DbPool,
 };
 
@@ -57,7 +58,7 @@ pub async fn get_post(
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(try500!(
-				serde_json::to_string(&x.get_full()),
+				serde_json::to_string(x.as_full()),
 				"get_post:json serialize"
 			))),
 		None => Ok(HttpResponse::NotFound()
@@ -92,6 +93,13 @@ pub async fn delete_post(
 			try500!(
 				post.update_is_deleted(&conn, true).await,
 				"delete_post:update_is_deleted"
+			);
+			let post = post.into_full();
+			// Also decrease our tag count
+			try500!(
+				Tag::update_decrease_counts(&conn, &post.tag_vector.0).await,
+				"delete_post:update_decrease_counts {:?}",
+				post.tag_vector
 			);
 			Ok(HttpResponse::Ok()
 				.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
@@ -188,6 +196,13 @@ pub async fn post_upload(
 		new_post.insert_into(&conn).await,
 		"post_upload:insert_into {:?}",
 		new_post
+	);
+
+	// Also insert/update our tags
+	let _ = try500!(
+		Tag::update_tag_count(&conn, &tags).await,
+		"post_upload:update_tag_count {:?}",
+		tags
 	);
 
 	let subfolder = image_path(post.id);

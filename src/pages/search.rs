@@ -94,7 +94,7 @@ pub async fn get_random_post(pool: web::Data<DbPool>) -> Result<HttpResponse, AP
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(try500!(
-				serde_json::to_string(&x.get_full()),
+				serde_json::to_string(x.as_full()),
 				"get_random_post:json serialize"
 			))),
 		None => Ok(HttpResponse::NotFound()

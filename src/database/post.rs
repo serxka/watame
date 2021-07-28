@@ -1,6 +1,6 @@
 use pg::types::ToSql;
 
-use crate::database::{enums::*, pg, tag::Tags, DatabaseError};
+use crate::database::{enums::*, pg, tag::TagVector, DatabaseError};
 use crate::pages::search::PostSorting;
 
 pub type Timestamp = chrono::DateTime<chrono::offset::Utc>;
@@ -9,7 +9,7 @@ pub type Timestamp = chrono::DateTime<chrono::offset::Utc>;
 pub struct PostFull {
 	pub id: i64,
 	pub poster: i32,
-	pub tag_vector: Tags,
+	pub tag_vector: TagVector,
 	pub create_date: Timestamp,
 	pub modified_date: Timestamp,
 	pub description: Option<String>,
@@ -39,9 +39,16 @@ impl Post {
 		}
 	}
 
-	pub fn get_full(self) -> PostFull {
+	pub fn into_full(self) -> PostFull {
 		match self {
 			Self::Full(post) => post,
+			_ => panic!("tried to get full post when wasn't full!"),
+		}
+	}
+
+	pub fn as_full(&self) -> &PostFull {
+		match self {
+			Self::Full(ref post) => post,
 			_ => panic!("tried to get full post when wasn't full!"),
 		}
 	}
@@ -53,15 +60,15 @@ impl Post {
 		}
 	}
 
-	fn serialise<'a>(row: &'a pg::row::Row) -> Self {
+	fn deserialise<'a>(row: &'a pg::row::Row) -> Self {
 		// Try and get the 17th column (is_deleted) to see if a full post or partial
 		match row.try_get::<usize, bool>(16) {
-			Ok(_) => Post::Full(Self::serialise_full(row)),
+			Ok(_) => Post::Full(Self::deserialise_full(row)),
 			Err(_) => Post::Partial(row.get(0)),
 		}
 	}
 
-	pub fn serialise_full<'a>(row: &'a pg::row::Row) -> PostFull {
+	pub fn deserialise_full<'a>(row: &'a pg::row::Row) -> PostFull {
 		PostFull {
 			id: row.get(0),
 			poster: row.get(1),
@@ -92,7 +99,7 @@ impl Post {
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
 		match row {
-			Some(row) => Ok(Some(Self::serialise(&row))),
+			Some(row) => Ok(Some(Self::deserialise(&row))),
 			None => Ok(None),
 		}
 	}
@@ -104,7 +111,7 @@ impl Post {
 	) -> Result<Option<(bool, Self)>, DatabaseError> {
 		// Select the post to see if it exists, also get the poster id
 		let params: [&(dyn ToSql + Sync); 1] = [&id];
-		let query = "SELECT id,poster FROM posts WHERE id=$1 AND is_deleted='false'";
+		let query = "SELECT * FROM posts WHERE id=$1 AND is_deleted='false'";
 		let row1 = client.query_opt(query, &params);
 		// Select the user and see if they have permissions
 		let params: [&(dyn ToSql + Sync); 1] = [&user];
@@ -116,8 +123,8 @@ impl Post {
 		match post_row {
 			Some(post) => {
 				let perms = user_row.get(5);
-				let poster: i32 = post.get(1);
-				let post = Self::serialise(&post);
+				let post = Self::deserialise(&post);
+				let poster = post.as_full().poster;
 				if poster == user || matches!(perms, Perms::Moderator | Perms::Admin) {
 					Ok(Some((true, post)))
 				} else {
@@ -136,7 +143,7 @@ impl Post {
 			.map_err(|e| DatabaseError::from(e))?;
 		let mut posts = Vec::new();
 		for row in rows {
-			posts.push(Self::serialise_full(&row));
+			posts.push(Self::deserialise_full(&row));
 		}
 		Ok(posts)
 	}
@@ -148,7 +155,7 @@ impl Post {
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
 		match row {
-			Some(row) => Ok(Some(Self::serialise(&row))),
+			Some(row) => Ok(Some(Self::deserialise(&row))),
 			None => Ok(None),
 		}
 	}
@@ -177,7 +184,7 @@ impl Post {
 			.map_err(|e| DatabaseError::from(e))?;
 		let mut posts = Vec::new();
 		for row in rows {
-			posts.push(Self::serialise_full(&row));
+			posts.push(Self::deserialise_full(&row));
 		}
 		Ok(posts)
 	}
@@ -200,7 +207,7 @@ impl Post {
 			.map_err(|e| DatabaseError::from(e))?;
 		let mut posts = Vec::new();
 		for row in rows {
-			posts.push(Self::serialise_full(&row));
+			posts.push(Self::deserialise_full(&row));
 		}
 		Ok(posts)
 	}
@@ -293,6 +300,6 @@ impl NewPost<'_> {
 			)
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
-		Ok(Post::serialise_full(&row))
+		Ok(Post::deserialise_full(&row))
 	}
 }
