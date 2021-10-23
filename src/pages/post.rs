@@ -24,7 +24,7 @@ fn format_paths(root: &str, subfolder: &str, id: i64, filename: &str) -> (PathBu
 		.iter()
 		.collect();
 	// File path for the smaller thumbnail
-	let tmb_path: PathBuf = [root, "tmb", &subfolder, &format!("{}-thumbnail.jpg", id)]
+	let tmb_path: PathBuf = [root, "tmb", &subfolder, &format!("{}.jpg", id)]
 		.iter()
 		.collect();
 
@@ -57,10 +57,7 @@ pub async fn get_post(
 	match post {
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(try500!(
-				serde_json::to_string(x.as_full()),
-				"get_post:json serialize"
-			))),
+			.body(serde_json::to_string(x.as_full()).unwrap())),
 		None => Ok(HttpResponse::NotFound()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"post not found"}"#)),
@@ -231,10 +228,7 @@ pub async fn post_upload(
 
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-		.body(try500!(
-			serde_json::to_string(&post),
-			"upload_post:json serialize"
-		)))
+		.body(serde_json::to_string(&post).unwrap()))
 }
 
 async fn process_multipart_image(
@@ -300,11 +294,11 @@ fn create_thumbnail(image: &mut image::DynamicImage) -> image::DynamicImage {
 	use image::{imageops, DynamicImage};
 	const THUMB_SIZE: u32 = 320;
 
-	let dimensions = image::GenericImageView::dimensions(image);
-	let sub = if dimensions.0 < dimensions.1 {
-		imageops::crop(image, 0, dimensions.0 / 4, dimensions.0, dimensions.0)
-	} else if dimensions.0 >= dimensions.1 {
-		imageops::crop(image, dimensions.1 / 4, 0, dimensions.1, dimensions.1)
+	let dim = image::GenericImageView::dimensions(image);
+	let sub = if dim.0 < dim.1 {
+		imageops::crop(image, 0, (dim.1 - dim.0) / 2, dim.0, dim.0)
+	} else if dim.0 >= dim.1 {
+		imageops::crop(image, (dim.0 - dim.1) / 2, 0, dim.1, dim.1)
 	} else {
 		unreachable!()
 	};

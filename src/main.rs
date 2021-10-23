@@ -5,6 +5,7 @@ use actix_files::Files;
 use actix_web::{middleware, web::Data, App, HttpServer};
 use log::LevelFilter;
 
+mod auth;
 mod database;
 mod error;
 mod pages;
@@ -38,10 +39,15 @@ async fn main() -> std::io::Result<()> {
 			let answer = answer[0] as char;
 			if answer == 'Y' || answer == 'y' {
 				println!("Dropping tables...");
+				auth::AuthDbCreator::clear_sessions(&settings.redis_uri).await;
 				database::drop_tables(settings).await;
 			} else {
 				println!("Cancelled, tables not dropped");
 			}
+		}
+		Action::ClearSessions => {
+			println!("Clearing User Sessions...");
+			auth::AuthDbCreator::clear_sessions(&settings.redis_uri).await;
 		}
 		Action::CreateFolders => {
 			let image_dirs = |root| {
@@ -68,6 +74,7 @@ async fn main() -> std::io::Result<()> {
 async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 	// Connect to the database and create a connection pool
 	let db_pool = database::establish_pool(&mut settings);
+	let auth_db = auth::AuthDbCreator::new(&settings.redis_uri).await;
 	// Settings that handlers can access
 	let run_settings = RunSettings::from(&settings);
 	// Create a listener so we can log what port we are operating on
@@ -81,6 +88,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 	HttpServer::new(move || {
 		use actix_web::web::{delete, get, post, resource, QueryConfig};
 		use pages::*;
+
 		let cors = Cors::default()
 			.allow_any_origin()
 			.allow_any_method()
@@ -89,17 +97,25 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 		App::new()
 			.wrap(cors)
 			.wrap(middleware::Logger::new("\t%a\t\"%r\"\t%s\t%b\t%Dms"))
+			.wrap(auth::AuthMiddlewareFactory::new(auth::AuthDb::new(
+				auth_db.clone(),
+			)))
 			.app_data(Data::new(db_pool.clone()))
+			.app_data(Data::new(auth::AuthDb::new(auth_db.clone())))
 			.app_data(Data::new(run_settings.clone()))
-			.app_data(
-				QueryConfig::default().error_handler(|_, _| error::APIError::BadRequestData.into()),
-			)
+			.app_data(QueryConfig::default().error_handler(|a, b| {
+				log::error!("{:?} {:?}", a, b);
+				error::APIError::BadRequestData.into()
+			}))
 			.service(
 				resource("/post")
 					.route(delete().to(post::delete_post))
 					.route(get().to(post::get_post))
 					.route(post().to(post::post_upload)),
 			)
+			.service(resource("/register").route(post().to(user::post_register)))
+			.service(resource("/login").route(post().to(user::post_login)))
+			.service(resource("/logout").route(delete().to(user::delete_logout)))
 			.service(resource("/purge").route(delete().to(post::delete_purge_posts)))
 			.service(resource("/tag").route(get().to(tag::get_info)))
 			.service(resource("/search").route(get().to(search::get_search)))

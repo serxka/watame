@@ -1,10 +1,11 @@
 use structopt::StructOpt;
 
 pub enum Action {
+	ClearSessions,
+	CreateFolders,
+	DropTables,
 	InstallSchema,
 	RunServer,
-	DropTables,
-	CreateFolders,
 }
 
 impl std::default::Default for Action {
@@ -16,17 +17,15 @@ impl std::default::Default for Action {
 impl std::str::FromStr for Action {
 	type Err = &'static str;
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		if s == "install-schema" {
-			Ok(Action::InstallSchema)
-		} else if s == "run" {
-			Ok(Action::RunServer)
-		} else if s == "drop-tables" {
-			Ok(Action::DropTables)
-		} else if s == "create-folders" {
-			Ok(Action::CreateFolders)
-		} else {
-			Err("unknown action")
-		}
+		let res = match s {
+			"clear-sessions" => Action::ClearSessions,
+			"create-folders" => Action::CreateFolders,
+			"drop-tables" => Action::DropTables,
+			"install-schema" => Action::InstallSchema,
+			"run" => Action::RunServer,
+			_ => return Err("unknown action"),
+		};
+		Ok(res)
 	}
 }
 
@@ -42,6 +41,7 @@ pub struct Settings {
 	pub database_credentials: (String, String),
 	pub database_name: String,
 	pub storage_root: String,
+	pub redis_uri: String,
 	/// Max payload of multipart structures in KiB
 	pub max_payload: usize,
 
@@ -56,6 +56,7 @@ impl std::default::Default for Settings {
 			database_credentials: ("postgres".to_owned(), "password".to_owned()),
 			database_name: "watame".to_owned(),
 			storage_root: "./storage/".to_owned(),
+			redis_uri: "redis://127.0.0.1:6379".to_owned(),
 			max_payload: 1024 * 64, // 64MiB
 			action: Action::default(),
 		}
@@ -85,6 +86,9 @@ impl Settings {
 		}
 		if let Ok(v) = std::env::var("WATAME_DB_NAME") {
 			settings.database_name = v;
+		}
+		if let Ok(v) = std::env::var("WATAME_REDIS_URI") {
+			settings.redis_uri = v;
 		}
 		if let Ok(v) = std::env::var("WATAME_STORAGE_ROOT") {
 			settings.storage_root = v;

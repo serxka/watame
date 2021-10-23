@@ -1,9 +1,11 @@
-use pg::types::{FromSql as FromSqlDerive, ToSql as ToSqlDerive};
-
 use crate::database::pg;
 use crate::pages::search::PostSorting;
 
-#[derive(Debug, serde::Serialize, ToSqlDerive, FromSqlDerive)]
+use pg::types::{FromSql as FromSqlDerive, ToSql as ToSqlDerive};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSqlDerive, FromSqlDerive)]
 #[postgres(name = "perms")]
 pub enum Perms {
 	Guest,
@@ -12,7 +14,7 @@ pub enum Perms {
 	Admin,
 }
 
-#[derive(Debug, serde::Serialize, ToSqlDerive, FromSqlDerive)]
+#[derive(Debug, Clone, Copy, Serialize, ToSqlDerive, FromSqlDerive)]
 #[postgres(name = "rating")]
 pub enum Rating {
 	Safe,
@@ -20,7 +22,7 @@ pub enum Rating {
 	Explicit,
 }
 
-#[derive(Debug, serde::Serialize, ToSqlDerive, FromSqlDerive)]
+#[derive(Debug, Clone, Copy, Serialize, ToSqlDerive, FromSqlDerive)]
 #[postgres(name = "imgext")]
 pub enum ImageExtension {
 	Bmp,

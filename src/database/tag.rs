@@ -40,6 +40,7 @@ impl Tag {
 		}
 	}
 
+	#[allow(dead_code)]
 	pub async fn insert_empty(
 		client: &pg::Client,
 		tag: &str,

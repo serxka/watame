@@ -42,14 +42,18 @@ pub enum APIError {
 	PayloadSize,
 	#[display(fmt = r#"{{"error":"unsupported mime type"}}"#)]
 	MimeType,
-	#[display(fmt = r#"{{"error":"too many tags, please reduce amount and try again"}}"#)]
+	#[display(fmt = r#"{{"error":"too many tags, please reduce amount"}}"#)]
 	TagLimit,
 	#[display(fmt = r#"{{"error":"one or more tags contained invalid characters"}}"#)]
 	BadTags,
-	#[display(
-		fmt = r#"{{"error":"too many items per page request, please reduce amount and try again"}}"#
-	)]
+	#[display(fmt = r#"{{"error":"too many items per page, please reduce amount"}}"#)]
 	PageSize,
+	#[display(fmt = r#"{{"error":"account details have already been used"}}"#)]
+	UserExists,
+	#[display(fmt = r#"{{"error":"password is too weak"}}"#)]
+	BadPassword,
+	#[display(fmt = r#"{{"error":"password or username where not correct"}}"#)]
+	BadCredentials,
 }
 
 impl error::ResponseError for APIError {
@@ -71,6 +75,9 @@ impl error::ResponseError for APIError {
 			Self::TagLimit => StatusCode::BAD_REQUEST,
 			Self::BadTags => StatusCode::BAD_REQUEST,
 			Self::PageSize => StatusCode::BAD_REQUEST,
+			Self::UserExists => StatusCode::BAD_REQUEST,
+			Self::BadPassword => StatusCode::BAD_REQUEST,
+			Self::BadCredentials => StatusCode::BAD_REQUEST,
 		}
 	}
 }

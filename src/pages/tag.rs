@@ -25,7 +25,7 @@ pub async fn get_info(
 	match tag {
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(try500!(serde_json::to_string(&x), "get_tag:json serialize"))),
+			.body(serde_json::to_string(&x).unwrap())),
 		None => Ok(HttpResponse::NotFound()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"tag not found"}"#)),

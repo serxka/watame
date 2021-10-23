@@ -74,10 +74,7 @@ pub async fn get_search(
 	} else {
 		Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(try500!(
-				serde_json::to_vec(&posts),
-				"get_search:json serialize"
-			)))
+			.body(serde_json::to_string(&posts).unwrap()))
 	}
 }
 
@@ -93,10 +90,7 @@ pub async fn get_random_post(pool: web::Data<DbPool>) -> Result<HttpResponse, AP
 	match post {
 		Some(x) => Ok(HttpResponse::Ok()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
-			.body(try500!(
-				serde_json::to_string(x.as_full()),
-				"get_random_post:json serialize"
-			))),
+			.body(serde_json::to_string(x.as_full()).unwrap())),
 		None => Ok(HttpResponse::NotFound()
 			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(r#"{"error":"no posts found"}"#)),
