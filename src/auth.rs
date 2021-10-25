@@ -266,7 +266,6 @@ impl core::ops::Deref for MaybeAuthenticated {
 }
 
 impl MaybeAuthenticated {
-	#[allow(dead_code)]
 	pub fn is_authenticated(&self) -> bool {
 		self.0.is_some()
 	}

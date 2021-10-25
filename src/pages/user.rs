@@ -1,4 +1,4 @@
-use crate::auth::{AuthDb, Authenticated};
+use crate::auth::{AuthDb, Authenticated, MaybeAuthenticated};
 use crate::database::{
 	user::{NewUser, User},
 	Pool as DbPool,
@@ -121,4 +121,16 @@ pub async fn delete_logout(
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 		.body(r#"{"success":"user logged out"}"#))
+}
+
+pub async fn get_logged_in(auth: MaybeAuthenticated) -> HttpResponse {
+	if auth.is_authenticated() {
+		HttpResponse::Ok()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(r#"{"status": "logged in"}"#)
+	} else {
+		HttpResponse::Ok()
+			.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+			.body(r#"{"status": "logged out"}"#)
+	}
 }

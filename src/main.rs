@@ -116,6 +116,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			.service(resource("/register").route(post().to(user::post_register)))
 			.service(resource("/login").route(post().to(user::post_login)))
 			.service(resource("/logout").route(delete().to(user::delete_logout)))
+			.service(resource("/loggedin").route(get().to(user::get_logged_in)))
 			.service(resource("/purge").route(delete().to(post::delete_purge_posts)))
 			.service(resource("/tag").route(get().to(tag::get_info)))
 			.service(resource("/search").route(get().to(search::get_search)))
