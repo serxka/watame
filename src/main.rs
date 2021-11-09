@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{BufReader, Read};
 
 use actix_cors::Cors;
 use actix_files::Files;
@@ -85,7 +85,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 	);
 
 	let storage_root = std::mem::take(&mut settings.storage_root);
-	HttpServer::new(move || {
+	let server = HttpServer::new(move || {
 		use actix_web::web::{delete, get, post, resource, QueryConfig};
 		use pages::*;
 
@@ -124,8 +124,41 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			// Debugging routes
 			.service(Files::new("/s", &storage_root))
 			.service(resource("/upload").route(get().to(pages::upload_post_html)))
-	})
-	.listen(http_listener)?
-	.run()
-	.await
+	});
+	// Run the server either with HTTPS or not
+	if settings.use_https {
+		let config: rustls::server::ServerConfig = get_tls_config(&settings);
+		server.listen_rustls(http_listener, config)?.run().await
+	} else {
+		server.listen(http_listener)?.run().await
+	}
+}
+
+fn get_tls_config(settings: &Settings) -> rustls::server::ServerConfig {
+	// Open files
+	let cert_file = &mut BufReader::new(
+		std::fs::File::open(&settings.cert).expect("failed to open certs file"),
+	);
+	let key_file = &mut BufReader::new(
+		std::fs::File::open(&settings.priv_key).expect("failed to open priv key file"),
+	);
+
+	// Parse files
+	let cert_chain = rustls_pemfile::certs(cert_file)
+		.unwrap()
+		.into_iter()
+		.map(rustls::Certificate)
+		.collect();
+	let mut keys = rustls_pemfile::pkcs8_private_keys(key_file).unwrap();
+	if keys.is_empty() {
+		log::error!("couldn't find keys");
+		std::process::exit(1);
+	}
+
+	// Create TLS config
+	rustls::ServerConfig::builder()
+		.with_safe_defaults()
+		.with_no_client_auth()
+		.with_single_cert(cert_chain, rustls::PrivateKey(keys.remove(0)))
+		.expect("bad certs/key")
 }

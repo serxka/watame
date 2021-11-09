@@ -14,8 +14,8 @@ use std::rc::Rc;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct AuthInfo {
-	uid: i32,
-	perms: Perms,
+	pub uid: i32,
+	pub perms: Perms,
 }
 
 impl core::convert::From<user::User> for AuthInfo {
@@ -205,7 +205,6 @@ impl Authenticated {
 }
 
 impl actix_web::FromRequest for Authenticated {
-	type Config = ();
 	type Error = APIError;
 	type Future = Ready<Result<Self, Self::Error>>;
 
@@ -242,7 +241,6 @@ impl MaybeAuthenticated {
 }
 
 impl actix_web::FromRequest for MaybeAuthenticated {
-	type Config = ();
 	type Error = APIError;
 	type Future = Ready<Result<Self, Self::Error>>;
 

@@ -1,6 +1,4 @@
-use actix_web::{
-	dev::BaseHttpResponseBuilder, error, http::header, http::StatusCode, HttpResponse,
-};
+use actix_web::{error, http::header, http::StatusCode, HttpResponse, HttpResponseBuilder};
 use derive_more::{Display, Error};
 
 #[macro_export]
@@ -58,7 +56,7 @@ pub enum APIError {
 
 impl error::ResponseError for APIError {
 	fn error_response(&self) -> HttpResponse {
-		BaseHttpResponseBuilder::new(self.status_code())
+		HttpResponseBuilder::new(self.status_code())
 			.insert_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 			.body(self.to_string())
 			.into()

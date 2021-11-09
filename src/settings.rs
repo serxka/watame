@@ -44,6 +44,9 @@ pub struct Settings {
 	pub redis_uri: String,
 	/// Max payload of multipart structures in KiB
 	pub max_payload: usize,
+	pub use_https: bool,
+	pub priv_key: String,
+	pub cert: String,
 
 	pub action: Action,
 }
@@ -58,6 +61,9 @@ impl std::default::Default for Settings {
 			storage_root: "./storage/".to_owned(),
 			redis_uri: "redis://127.0.0.1:6379".to_owned(),
 			max_payload: 1024 * 64, // 64MiB
+			use_https: false,
+			priv_key: "key.pem".to_owned(),
+			cert: "cert.pem".to_owned(),
 			action: Action::default(),
 		}
 	}
@@ -98,6 +104,20 @@ impl Settings {
 				Ok(v) => settings.max_payload = v,
 				Err(_) => log::warn!("invalid database address format: '{}'", v),
 			}
+		}
+		if let Ok(v) = std::env::var("WATAME_USE_HTTPS") {
+			match v.parse() {
+				Ok(v) => settings.use_https = v,
+				Err(_) => {
+					log::warn!("unknown value for WATAME_USE_HTTPS, must be 'true' or 'false'")
+				}
+			}
+		}
+		if let Ok(v) = std::env::var("WATAME_PRIV_KEY") {
+			settings.priv_key = v;
+		}
+		if let Ok(v) = std::env::var("WATAME_CERT") {
+			settings.cert = v;
 		}
 
 		settings.merge_cli_opts(CliOptions::from_args());
