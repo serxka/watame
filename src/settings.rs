@@ -36,8 +36,9 @@ struct CliOptions {
 }
 
 pub struct Settings {
-	pub server_host: std::net::SocketAddr,
-	pub database_host: std::net::SocketAddrV4,
+	pub server_host: String,
+	pub database_host: String,
+	pub database_port: u16,
 	pub database_credentials: (String, String),
 	pub database_name: String,
 	pub storage_root: String,
@@ -54,8 +55,9 @@ pub struct Settings {
 impl std::default::Default for Settings {
 	fn default() -> Settings {
 		Settings {
-			server_host: "127.0.0.1:8080".parse().unwrap(),
-			database_host: "127.0.0.1:5432".parse().unwrap(),
+			server_host: "127.0.0.1:8080".to_owned(),
+			database_host: "127.0.0.1".to_owned(),
+			database_port: 5432,
 			database_credentials: ("postgres".to_owned(), "password".to_owned()),
 			database_name: "watame".to_owned(),
 			storage_root: "./storage/".to_owned(),
@@ -73,15 +75,15 @@ impl Settings {
 	pub fn parse() -> Settings {
 		let mut settings = Self::default();
 		if let Ok(v) = std::env::var("WATAME_HOST") {
-			match v.parse() {
-				Ok(v) => settings.server_host = v,
-				Err(_) => log::warn!("invalid host address format: '{}'", v),
-			}
+			settings.server_host = v;
 		}
 		if let Ok(v) = std::env::var("WATAME_DB_HOST") {
+			settings.database_host = v;
+		}
+		if let Ok(v) = std::env::var("WATAME_DB_PORT") {
 			match v.parse() {
-				Ok(v) => settings.database_host = v,
-				Err(_) => log::warn!("invalid database address format: '{}'", v),
+				Ok(v) => settings.database_port = v,
+				Err(_) => log::warn!("invalid database port number"),
 			}
 		}
 		if let Ok(v) = std::env::var("WATAME_DB_USER") {

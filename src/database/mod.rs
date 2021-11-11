@@ -12,9 +12,9 @@ pub use error::DatabaseError;
 pub fn establish_pool(settings: &mut crate::settings::Settings) -> Pool {
 	let mut cfg = deadpool_postgres::Config::new();
 	cfg.dbname = Some(std::mem::take(&mut settings.database_name));
-	cfg.host = Some(settings.database_host.ip().to_string());
+	cfg.host = Some(settings.database_host.clone());
 	cfg.password = Some(std::mem::take(&mut settings.database_credentials.1));
-	cfg.port = Some(settings.database_host.port());
+	cfg.port = Some(settings.database_port);
 	cfg.user = Some(std::mem::take(&mut settings.database_credentials.0));
 
 	let pool = cfg

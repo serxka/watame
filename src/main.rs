@@ -78,7 +78,7 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 	// Settings that handlers can access
 	let run_settings = RunSettings::from(&settings);
 	// Create a listener so we can log what port we are operating on
-	let http_listener = std::net::TcpListener::bind(settings.server_host)?;
+	let http_listener = std::net::TcpListener::bind(&settings.server_host)?;
 	log::info!(
 		"Watame Server Listening on {}",
 		http_listener.local_addr().unwrap()
