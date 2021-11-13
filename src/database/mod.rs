@@ -31,7 +31,7 @@ pub async fn install_schema(mut settings: crate::settings::Settings) {
 		.expect("failed to get connection from pool");
 
 	let scripts = [
-		"CREATE EXTENSION tag_parser;",
+		"CREATE EXTENSION IF NOT EXISTS tag_parser;",
 		include_str!("../../sql/create_users.sql"),
 		include_str!("../../sql/create_tags.sql"),
 		include_str!("../../sql/create_posts.sql"),
