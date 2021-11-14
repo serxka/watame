@@ -2,13 +2,35 @@ use crate::auth::{AuthDb, Authenticated, MaybeAuthenticated};
 use crate::database::{
 	user::{NewUser, User},
 	Pool as DbPool,
+	enums::Perms,
 };
 use crate::{error::APIError, try500};
 
 use actix_web::{http::header, web, HttpRequest, HttpResponse};
 use argon2::{self, Config};
-
 use rand::Rng;
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct UserAPI {
+	pub id: i32,
+	pub username: String,
+	pub email: Option<String>,
+	pub picture: String,
+	pub perms: Perms,
+}
+
+impl core::convert::From<User> for UserAPI {
+	fn from(u: User) -> UserAPI {
+		UserAPI {
+			id: u.id,
+			username: u.name,
+			email: u.email,
+			picture: u.picture,
+			perms: u.perms,
+		}
+	}
+}
 
 #[derive(serde::Deserialize)]
 pub struct RegisterUserQuery {
@@ -54,6 +76,7 @@ pub async fn post_register(
 		"post_register:insert_into {:?}",
 		new_user
 	);
+	let user: UserAPI = user.into();
 
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
