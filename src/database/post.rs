@@ -171,17 +171,53 @@ impl Post {
 		if tags.len() == 0 {
 			return Self::select_fulltext_empty(client, page, limit, sorting).await;
 		}
-		let query = format!(
-			"SELECT * FROM posts WHERE tag_vector @@ to_tsquery('tag_parser', $1) AND is_deleted='false' {} OFFSET {} LIMIT {}",
-			sorting.to_sql(),
-			page * limit,
-			limit
-		);
-		let tags: String = tags.iter().flat_map(|s| s.chars().chain([','])).collect();
-		let rows = client
-			.query(query.as_str(), &[&tags])
-			.await
-			.map_err(|e| DatabaseError::from(e))?;
+		let (t_inc, t_exc) = ts_query_builder(tags);
+		let rows = if t_exc.is_empty() {
+			let query = format!(
+				"SELECT * FROM posts WHERE \
+					    tag_vector @@ plainto_tsquery('tag_parser', $1) \
+					AND is_deleted='false' \
+					{} OFFSET {} LIMIT {}",
+				sorting.to_sql(),
+				page * limit,
+				limit
+			);
+			client
+				.query(query.as_str(), &[&t_inc])
+				.await
+				.map_err(|e| DatabaseError::from(e))?
+		} else if t_inc.is_empty() {
+			let query = format!(
+				"SELECT * FROM posts WHERE \
+					NOT tag_vector @@ plainto_tsquery('tag_parser', $1) \
+					AND is_deleted='false' \
+					{} OFFSET {} LIMIT {}",
+				sorting.to_sql(),
+				page * limit,
+				limit
+			);
+			println!("gaming, {}", query);
+			client
+				.query(query.as_str(), &[&t_exc])
+				.await
+				.map_err(|e| DatabaseError::from(e))?
+		} else {
+			let query = format!(
+				"SELECT * FROM posts WHERE \
+					        tag_vector @@ plainto_tsquery('tag_parser', $1) \
+					AND NOT tag_vector @@ plainto_tsquery('tag_parser', $2) \
+					AND     is_deleted='false' \
+					{} OFFSET {} LIMIT {}",
+				sorting.to_sql(),
+				page * limit,
+				limit
+			);
+			client
+				.query(query.as_str(), &[&t_inc, &t_exc])
+				.await
+				.map_err(|e| DatabaseError::from(e))?
+		};
+
 		let mut posts = Vec::new();
 		for row in rows {
 			posts.push(Self::deserialise_full(&row));
@@ -253,6 +289,24 @@ impl Post {
 			.map_err(|e| DatabaseError::from(e))?;
 		Ok(())
 	}
+}
+
+fn ts_query_builder(tags: &[&str]) -> (String, String) {
+	let mut include = String::new();
+	let mut exclude = String::new();
+	for tag in tags {
+		if &tag[0..1] == "!" {
+			exclude.push_str(&tag[1..]);
+			exclude.push(',');
+		} else {
+			include.push_str(tag);
+			include.push(',');
+		}
+	}
+	include.pop();
+	exclude.pop();
+	println!("{:?} , {:?}", include, exclude);
+	(include, exclude)
 }
 
 impl std::convert::From<i64> for Post {
