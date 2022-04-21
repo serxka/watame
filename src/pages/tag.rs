@@ -1,4 +1,4 @@
-use crate::database::{tag::Tag, Pool as DbPool};
+use crate::database::{pg, tag::Tag, Pool as DbPool};
 use crate::{error::APIError, try500};
 
 use actix_web::{http::header, web, HttpResponse};
@@ -16,7 +16,7 @@ pub async fn get_info(
 	// Query database for tag
 	let conn = try500!(pool.get().await, "get_tag:db pool");
 	let tag = try500!(
-		Tag::select_tag_name(&conn, &query.name).await,
+		Tag::select_tag_name::<pg::Client>(&conn, &query.name).await,
 		"get_tag:select_tag_name {}",
 		query.name
 	);

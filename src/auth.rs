@@ -31,7 +31,6 @@ impl core::convert::From<user::User> for AuthInfo {
 // an Atomic reference counter
 #[derive(Clone)]
 pub struct AuthDbCreator {
-	client: redis::Client,
 	conn: redis::aio::MultiplexedConnection,
 }
 
@@ -42,7 +41,7 @@ impl AuthDbCreator {
 			.get_multiplexed_tokio_connection()
 			.await
 			.expect("failed to connect to redis");
-		Self { client, conn }
+		Self { conn }
 	}
 
 	pub async fn clear_sessions(uri: &str) {
@@ -92,8 +91,6 @@ impl AuthDb {
 			return Err(APIError::BadRequestData);
 		}
 		let key = format!("user:{}", token);
-
-		println!("{}", key);
 
 		let mut conn = self.0.conn.clone();
 		let exists: Option<String> = try500!(

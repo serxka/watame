@@ -1,4 +1,4 @@
-use crate::database::{post::Post, Pool as DbPool};
+use crate::database::{pg, post::Post, Pool as DbPool};
 use crate::{error::APIError, try500};
 
 use actix_web::{http::header, web, HttpResponse};
@@ -62,7 +62,8 @@ pub async fn get_search(
 	// Query database for post
 	let conn = try500!(pool.get().await, "get_search:db pool");
 	let posts = try500!(
-		Post::select_fulltext_tags(&conn, &tags, query.page, query.limit, query.sort).await,
+		Post::select_fulltext_tags::<pg::Client>(&conn, &tags, query.page, query.limit, query.sort)
+			.await,
 		"get_search:select_fulltext_tags {:?}",
 		query
 	);
@@ -82,7 +83,7 @@ pub async fn get_random_post(pool: web::Data<DbPool>) -> Result<HttpResponse, AP
 	// Query database for post
 	let conn = try500!(pool.get().await, "get_search:db pool");
 	let post = try500!(
-		Post::select_post_random(&conn).await,
+		Post::select_post_random::<pg::Client>(&conn).await,
 		"get_random_post:select_post_random"
 	);
 

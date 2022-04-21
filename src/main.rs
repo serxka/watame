@@ -1,7 +1,6 @@
 use std::io::{BufReader, Read};
 
 use actix_cors::Cors;
-use actix_files::Files;
 use actix_web::{middleware, web::Data, App, HttpServer};
 use log::LevelFilter;
 
@@ -23,7 +22,7 @@ async fn main() -> std::io::Result<()> {
 
 	let settings = Settings::parse();
 
-	// Decide what are need to do
+	// Decide what we need to do
 	match settings.action {
 		Action::RunServer => run_server(settings).await?,
 		Action::InstallSchema => {
@@ -31,7 +30,10 @@ async fn main() -> std::io::Result<()> {
 			database::install_schema(settings).await
 		}
 		Action::DropTables => {
-			println!("CAUTION: Are you sure you want to drop all the tables? This will delete any data stored, image data will be unaffected (y/N)");
+			println!(
+				"CAUTION: Are you sure you want to drop all the tables? This will delete any data \
+				 stored, image data will be unaffected (y/N)"
+			);
 			let mut answer = [0];
 			std::io::stdin()
 				.read_exact(&mut answer)
@@ -66,6 +68,9 @@ async fn main() -> std::io::Result<()> {
 			image_dirs(format!("{}/img", settings.storage_root));
 			image_dirs(format!("{}/tmb", settings.storage_root));
 			image_dirs(format!("{}/pfp", settings.storage_root));
+			println!("Copying default images...");
+			let image = include_bytes!("../res/default_pfp.png");
+			std::fs::write(format!("{}/pfp/default.png", settings.storage_root), image).ok();
 		}
 	}
 	Ok(())
@@ -84,7 +89,9 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 		http_listener.local_addr().unwrap()
 	);
 
+	#[cfg(feature = "host-storage")]
 	let storage_root = std::mem::take(&mut settings.storage_root);
+
 	let server = HttpServer::new(move || {
 		use actix_web::web::{delete, get, post, resource, QueryConfig};
 		use pages::*;
@@ -93,8 +100,13 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			.allow_any_origin()
 			.allow_any_method()
 			.max_age(3600);
+		let query_config = QueryConfig::default().error_handler(|a, b| {
+			log::error!("{:?} {:?}", a, b);
+			error::APIError::BadRequestData.into()
+		});
 
-		App::new()
+		// Wrap up any data or middleware that the actix web server will use
+		let app = App::new()
 			.wrap(cors)
 			.wrap(middleware::Logger::new("\t%a\t\"%r\"\t%s\t%b\t%Dms"))
 			.wrap(auth::AuthMiddlewareFactory::new(auth::AuthDb::new(
@@ -103,16 +115,17 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			.app_data(Data::new(db_pool.clone()))
 			.app_data(Data::new(auth::AuthDb::new(auth_db.clone())))
 			.app_data(Data::new(run_settings.clone()))
-			.app_data(QueryConfig::default().error_handler(|a, b| {
-				log::error!("{:?} {:?}", a, b);
-				error::APIError::BadRequestData.into()
-			}))
+			.app_data(query_config);
+
+		// Set our servers routes
+		let app = app
 			.service(
 				resource("/post")
 					.route(delete().to(post::delete_post))
 					.route(get().to(post::get_post))
 					.route(post().to(post::post_upload)),
 			)
+			.service(resource("/user").route(get().to(user::get_self)))
 			.service(resource("/register").route(post().to(user::post_register)))
 			.service(resource("/login").route(post().to(user::post_login)))
 			.service(resource("/logout").route(delete().to(user::delete_logout)))
@@ -120,11 +133,13 @@ async fn run_server(mut settings: Settings) -> std::io::Result<()> {
 			.service(resource("/purge").route(delete().to(post::delete_purge_posts)))
 			.service(resource("/tag").route(get().to(tag::get_info)))
 			.service(resource("/search").route(get().to(search::get_search)))
-			.service(resource("/random").route(get().to(search::get_random_post)))
-			// Debugging routes
-			.service(Files::new("/s", &storage_root))
-			.service(resource("/upload").route(get().to(pages::upload_post_html)))
+			.service(resource("/random").route(get().to(search::get_random_post)));
+		#[cfg(feature = "host-storage")]
+		let app = app.service(actix_files::Files::new("/s", &storage_root));
+
+		app
 	});
+
 	// Run the server either with HTTPS or not
 	if settings.use_https {
 		let config: rustls::server::ServerConfig = get_tls_config(&settings);

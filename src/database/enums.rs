@@ -5,7 +5,7 @@ use pg::types::{FromSql as FromSqlDerive, ToSql as ToSqlDerive};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSqlDerive, FromSqlDerive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSqlDerive, FromSqlDerive)]
 #[postgres(name = "perms")]
 pub enum Perms {
 	Guest,
@@ -14,12 +14,18 @@ pub enum Perms {
 	Admin,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, ToSqlDerive, FromSqlDerive)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSqlDerive, FromSqlDerive)]
 #[postgres(name = "rating")]
 pub enum Rating {
 	Safe,
 	Sketchy,
 	Explicit,
+}
+
+impl core::default::Default for Rating {
+	fn default() -> Self {
+		Rating::Sketchy
+	}
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSqlDerive, FromSqlDerive)]

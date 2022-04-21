@@ -25,8 +25,8 @@ impl Tag {
 }
 
 impl Tag {
-	pub async fn select_tag_name(
-		client: &pg::Client,
+	pub async fn select_tag_name<C: pg::GenericClient>(
+		client: &C,
 		name: &str,
 	) -> Result<Option<Tag>, DatabaseError> {
 		let query = "SELECT * FROM tags WHERE name = $1";
@@ -41,8 +41,8 @@ impl Tag {
 	}
 
 	#[allow(dead_code)]
-	pub async fn insert_empty(
-		client: &pg::Client,
+	pub async fn insert_empty<C: pg::GenericClient>(
+		client: &C,
 		tag: &str,
 		ty: i16,
 	) -> Result<(), DatabaseError> {
@@ -54,13 +54,14 @@ impl Tag {
 		Ok(())
 	}
 
-	pub async fn update_tag_count(
-		client: &pg::Client,
+	pub async fn update_tag_count<C: pg::GenericClient>(
+		client: &C,
 		tags: &[&str],
 	) -> Result<u64, DatabaseError> {
 		let statement = client
 			.prepare_typed(
-				"INSERT INTO tags (name, count) VALUES ($1, 1) ON CONFLICT (name) DO UPDATE SET count = tags.count+1",
+				"INSERT INTO tags (name, count) VALUES ($1, 1) ON CONFLICT (name) DO UPDATE SET \
+				 count = tags.count+1",
 				&[Type::TEXT],
 			)
 			.await
@@ -78,8 +79,8 @@ impl Tag {
 		Ok(modified)
 	}
 
-	pub async fn update_decrease_counts(
-		client: &pg::Client,
+	pub async fn update_decrease_counts<C: pg::GenericClient>(
+		client: &C,
 		tags: &[String],
 	) -> Result<u64, DatabaseError> {
 		let query = "UPDATE tags SET count = count-1 WHERE name = ANY($1)";

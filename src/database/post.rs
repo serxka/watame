@@ -92,7 +92,10 @@ impl Post {
 }
 
 impl Post {
-	pub async fn select_post(client: &pg::Client, id: i64) -> Result<Option<Self>, DatabaseError> {
+	pub async fn select_post<C: pg::GenericClient>(
+		client: &C,
+		id: i64,
+	) -> Result<Option<Self>, DatabaseError> {
 		let query = "SELECT * FROM posts WHERE id=$1 AND is_deleted='false'";
 		let row = client
 			.query_opt(query, &[&id])
@@ -104,8 +107,8 @@ impl Post {
 		}
 	}
 
-	pub async fn select_can_delete(
-		client: &pg::Client,
+	pub async fn select_can_delete<C: pg::GenericClient>(
+		client: &C,
 		id: i64,
 		user: i32,
 	) -> Result<Option<(bool, Self)>, DatabaseError> {
@@ -113,13 +116,16 @@ impl Post {
 		let params: [&(dyn ToSql + Sync); 1] = [&id];
 		let query = "SELECT * FROM posts WHERE id=$1 AND is_deleted='false'";
 		let row1 = client.query_opt(query, &params);
+
 		// Select the user and see if they have permissions
 		let params: [&(dyn ToSql + Sync); 1] = [&user];
 		let query = "SELECT * FROM users WHERE id=$1";
 		let row2 = client.query_one(query, &params);
+
 		// Await on these
 		let (post_row, user_row) =
 			futures::try_join!(row1, row2).map_err(|e| DatabaseError::from(e))?;
+
 		match post_row {
 			Some(post) => {
 				let perms = user_row.get(5);
@@ -135,7 +141,9 @@ impl Post {
 		}
 	}
 
-	pub async fn select_is_deleted(client: &pg::Client) -> Result<Vec<PostFull>, DatabaseError> {
+	pub async fn select_is_deleted<C: pg::GenericClient>(
+		client: &C,
+	) -> Result<Vec<PostFull>, DatabaseError> {
 		let query = "SELECT * FROM posts WHERE is_deleted='true'";
 		let rows = client
 			.query(query, &[])
@@ -148,7 +156,9 @@ impl Post {
 		Ok(posts)
 	}
 
-	pub async fn select_post_random(client: &pg::Client) -> Result<Option<Self>, DatabaseError> {
+	pub async fn select_post_random<C: pg::GenericClient>(
+		client: &C,
+	) -> Result<Option<Self>, DatabaseError> {
 		let query = "SELECT * FROM posts ORDER BY RANDOM() LIMIT 1 WHERE is_deleted='false'";
 		let row = client
 			.query_opt(query, &[])
@@ -160,8 +170,8 @@ impl Post {
 		}
 	}
 
-	pub async fn select_fulltext_tags(
-		client: &pg::Client,
+	pub async fn select_fulltext_tags<C: pg::GenericClient>(
+		client: &C,
 		tags: &[&str],
 		page: u32,
 		limit: u32,
@@ -174,10 +184,8 @@ impl Post {
 		let (t_inc, t_exc) = ts_query_builder(tags);
 		let rows = if t_exc.is_empty() {
 			let query = format!(
-				"SELECT * FROM posts WHERE \
-					    tag_vector @@ plainto_tsquery('tag_parser', $1) \
-					AND is_deleted='false' \
-					{} OFFSET {} LIMIT {}",
+				"SELECT * FROM posts WHERE tag_vector @@ plainto_tsquery('tag_parser', $1) AND \
+				 is_deleted='false' {} OFFSET {} LIMIT {}",
 				sorting.to_sql(),
 				page * limit,
 				limit
@@ -188,10 +196,8 @@ impl Post {
 				.map_err(|e| DatabaseError::from(e))?
 		} else if t_inc.is_empty() {
 			let query = format!(
-				"SELECT * FROM posts WHERE \
-					NOT tag_vector @@ plainto_tsquery('tag_parser', $1) \
-					AND is_deleted='false' \
-					{} OFFSET {} LIMIT {}",
+				"SELECT * FROM posts WHERE NOT tag_vector @@ plainto_tsquery('tag_parser', $1) \
+				 AND is_deleted='false' {} OFFSET {} LIMIT {}",
 				sorting.to_sql(),
 				page * limit,
 				limit
@@ -203,11 +209,9 @@ impl Post {
 				.map_err(|e| DatabaseError::from(e))?
 		} else {
 			let query = format!(
-				"SELECT * FROM posts WHERE \
-					        tag_vector @@ plainto_tsquery('tag_parser', $1) \
-					AND NOT tag_vector @@ plainto_tsquery('tag_parser', $2) \
-					AND     is_deleted='false' \
-					{} OFFSET {} LIMIT {}",
+				"SELECT * FROM posts WHERE tag_vector @@ plainto_tsquery('tag_parser', $1) AND \
+				 NOT tag_vector @@ plainto_tsquery('tag_parser', $2) AND     is_deleted='false' \
+				 {} OFFSET {} LIMIT {}",
 				sorting.to_sql(),
 				page * limit,
 				limit
@@ -225,8 +229,8 @@ impl Post {
 		Ok(posts)
 	}
 
-	async fn select_fulltext_empty(
-		client: &pg::Client,
+	async fn select_fulltext_empty<C: pg::GenericClient>(
+		client: &C,
 		page: u32,
 		limit: u32,
 		sorting: PostSorting,
@@ -248,9 +252,9 @@ impl Post {
 		Ok(posts)
 	}
 
-	pub async fn update_path(
+	pub async fn update_path<C: pg::GenericClient>(
 		&mut self,
-		client: &pg::Client,
+		client: &C,
 		new_path: &str,
 	) -> Result<(), DatabaseError> {
 		let query = "UPDATE posts SET path=$1 WHERE id=$2";
@@ -265,9 +269,9 @@ impl Post {
 		Ok(())
 	}
 
-	pub async fn update_is_deleted(
+	pub async fn update_is_deleted<C: pg::GenericClient>(
 		&mut self,
-		client: &pg::Client,
+		client: &C,
 		is_deleted: bool,
 	) -> Result<(), DatabaseError> {
 		let query = "UPDATE posts SET is_deleted=$1 WHERE id=$2";
@@ -281,13 +285,16 @@ impl Post {
 		Ok(())
 	}
 
-	pub async fn delete_post(&self, client: &pg::Client) -> Result<(), DatabaseError> {
-		let query = "DELETE FROM posts WHERE id=$1";
-		client
+	pub async fn delete_post_checked<C: pg::GenericClient>(
+		&self,
+		client: &C,
+	) -> Result<bool, DatabaseError> {
+		let query = "DELETE FROM posts WHERE id=$1 AND is_deleted = 'true'";
+		let res = client
 			.execute(query, &[&self.get_id()])
 			.await
 			.map_err(|e| DatabaseError::from(e))?;
-		Ok(())
+		Ok(res != 0)
 	}
 }
 
@@ -322,15 +329,20 @@ pub struct NewPost<'a> {
 	pub path: &'a str,
 	pub size: i32,
 	pub dimensions: (i32, i32),
+	pub rating: Rating,
 	pub description: &'a str,
 	pub tags: &'a [&'a str],
 	pub poster: i32,
 }
 
 impl NewPost<'_> {
-	pub async fn insert_into(&self, client: &pg::Client) -> Result<PostFull, DatabaseError> {
-		let query = "INSERT INTO posts (filename, path, ext, size, width, height, description, tag_vector, poster) VALUES\
-		             ($1, $2, $3, $4, $5, $6, $7, to_tsvector('tag_parser', $8), $9) RETURNING *";
+	pub async fn insert_into<C: pg::GenericClient>(
+		&self,
+		client: &C,
+	) -> Result<PostFull, DatabaseError> {
+		let query = "INSERT INTO posts (filename, path, ext, size, width, height, description, \
+		             rating, tag_vector, poster) VALUES($1, $2, $3, $4, $5, $6, $7, $8, \
+		             to_tsvector('tag_parser', $9), $10) RETURNING *";
 		let tags: String = self
 			.tags
 			.iter()
@@ -348,6 +360,7 @@ impl NewPost<'_> {
 					&self.dimensions.0,
 					&self.dimensions.1,
 					&self.description,
+					&self.rating,
 					&tags,
 					&self.poster,
 				],

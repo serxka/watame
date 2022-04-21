@@ -15,8 +15,20 @@ pub struct User {
 }
 
 impl User {
-	pub async fn select_name(
-		client: &pg::Client,
+	pub async fn select_id<C: pg::GenericClient>(
+		client: &C,
+		uid: i32,
+	) -> Result<Option<User>, DatabaseError> {
+		let query = "SELECT * FROM users WHERE id=$1";
+		let row = client
+			.query_opt(query, &[&uid])
+			.await
+			.map_err(|e| DatabaseError::from(e))?;
+		Ok(row.as_ref().map(|row| Self::deserialise(row)))
+	}
+
+	pub async fn select_name<C: pg::GenericClient>(
+		client: &C,
 		name: &str,
 	) -> Result<Option<User>, DatabaseError> {
 		let query = "SELECT * FROM users WHERE name=$1";
@@ -27,8 +39,8 @@ impl User {
 		Ok(row.as_ref().map(|row| Self::deserialise(row)))
 	}
 
-	pub async fn check_existence(
-		client: &pg::Client,
+	pub async fn check_existence<C: pg::GenericClient>(
+		client: &C,
 		name: &str,
 		email: Option<&str>,
 	) -> Result<bool, DatabaseError> {
@@ -64,9 +76,12 @@ pub struct NewUser<'a> {
 }
 
 impl<'a> NewUser<'a> {
-	pub async fn insert_into(&self, client: &pg::Client) -> Result<User, DatabaseError> {
-		let query = "INSERT INTO users (name, email, pass, picture) VALUES\
-		             ($1, $2, $3, $4) RETURNING *";
+	pub async fn insert_into<C: pg::GenericClient>(
+		&self,
+		client: &C,
+	) -> Result<User, DatabaseError> {
+		let query =
+			"INSERT INTO users (name, email, pass, picture) VALUES($1, $2, $3, $4) RETURNING *";
 		let row = client
 			.query_one(
 				query,

@@ -1,8 +1,9 @@
 use crate::auth::{AuthDb, Authenticated, MaybeAuthenticated};
 use crate::database::{
+	enums::Perms,
+	pg,
 	user::{NewUser, User},
 	Pool as DbPool,
-	enums::Perms,
 };
 use crate::{error::APIError, try500};
 
@@ -52,9 +53,10 @@ pub async fn post_register(
 		// this will be of concern later, for testing is fine
 	} */
 	// Check that the username or email haven't been used before
-	let conn = try500!(pool.get().await, "post_register:db pool");
+	let mut conn = try500!(pool.get().await, "post_register:db pool");
+	let trans = try500!(conn.transaction().await);
 	if try500!(
-		User::check_existence(&conn, &query.user, Some(&query.email)).await,
+		User::check_existence::<pg::Transaction<'_>>(&trans, &query.user, Some(&query.email)).await,
 		"post_register:check_existence"
 	) {
 		return Err(APIError::UserExists);
@@ -72,11 +74,14 @@ pub async fn post_register(
 	};
 
 	let user = try500!(
-		new_user.insert_into(&conn).await,
+		new_user.insert_into::<pg::Transaction<'_>>(&trans).await,
 		"post_register:insert_into {:?}",
 		new_user
 	);
 	let user: UserAPI = user.into();
+
+	// Commit our transaction
+	try500!(trans.commit().await);
 
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
@@ -97,7 +102,7 @@ pub async fn post_login(
 	// Attempt to get our user from the database
 	let conn = try500!(pool.get().await, "post_login:db pool");
 	let user = try500!(
-		User::select_name(&conn, &query.user).await,
+		User::select_name::<pg::Client>(&conn, &query.user).await,
 		"post_login:select_name {:?}",
 		query.user
 	);
@@ -122,17 +127,15 @@ pub async fn post_login(
 	base64::encode_config_buf(token, base64::STANDARD, &mut key);
 
 	// Don't bother checking if it's not taken, just error
-	auth_db.remember(&key, &user.into()).await?;
-
-	// Re-encode without 'user:' to send to client as a token
-	key.clear();
-	base64::encode_config_buf(token, base64::STANDARD, &mut key);
+	let user = user.into();
+	auth_db.remember(&key, &user).await?;
 
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 		.body(format!(
-			r#"{{"success":"user logged in","token":"{}"}}"#,
-			key
+			r#"{{"success":"user logged in","token":"{}","data":{}}}"#,
+			&key[5..key.len()],
+			serde_json::to_string(&user).unwrap()
 		)))
 }
 
@@ -144,6 +147,26 @@ pub async fn delete_logout(
 	Ok(HttpResponse::Ok()
 		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
 		.body(r#"{"success":"user logged out"}"#))
+}
+
+pub async fn get_self(
+	pool: web::Data<DbPool>,
+	auth: Authenticated,
+) -> Result<HttpResponse, APIError> {
+	let conn = try500!(pool.get().await, "post_login:db pool");
+	let user = try500!(
+		User::select_id::<pg::Client>(&conn, auth.uid).await,
+		"post_login:select_name {:?}",
+		auth.uid
+	);
+	let user = match user {
+		Some(u) => UserAPI::from(u),
+		None => return Err(APIError::BadRequestData),
+	};
+
+	Ok(HttpResponse::Ok()
+		.append_header((header::CONTENT_TYPE, "application/json; charset=utf-8"))
+		.body(serde_json::to_string(&user).unwrap()))
 }
 
 pub async fn get_logged_in(auth: MaybeAuthenticated) -> HttpResponse {
